@@ -4,7 +4,20 @@ import DebitNoteForm from "./components/DebitNoteForm";
 import DebitNotePreview from "./components/DebitNotePreview";
 import HistorySidebar from "./components/HistorySidebar";
 import MasterDataTab from "./components/MasterDataTab";
-import { Upload, FileText, Database, Layers, Sparkles, RefreshCw, Printer, AlertTriangle, CheckSquare, X } from "lucide-react";
+import { Upload, FileText, Database, Layers, Sparkles, RefreshCw, Printer, AlertTriangle, CheckSquare, X, WifiOff, Wifi } from "lucide-react";
+import {
+  getFees,
+  saveFee,
+  deleteFee,
+  getCustomers,
+  saveCustomer,
+  deleteCustomer,
+  getHistory,
+  saveHistoryNote,
+  deleteHistoryNote,
+  extractDocumentData,
+  checkBackendAvailability
+} from "./utils/dataService";
 
 const parseVolume = (volumeStr: string): { qty?: number; unit: string } => {
   const clean = (volumeStr || "").trim().toUpperCase();
@@ -81,6 +94,7 @@ export default function App() {
   const [history, setHistory] = useState<DebitNote[]>([]);
   const [customers, setCustomers] = useState<Customer[]>([]);
   const [fees, setFees] = useState<Fee[]>([]);
+  const [isOffline, setIsOffline] = useState(false);
 
   // Active document editing
   const [activeNote, setActiveNote] = useState<DebitNote>(createNewBlankDebitNote());
@@ -109,21 +123,26 @@ export default function App() {
 
   // Fetch initial master lists on mount
   useEffect(() => {
-    fetchMasterData();
+    const initApp = async () => {
+      const liveBackend = await checkBackendAvailability();
+      setIsOffline(!liveBackend);
+      await fetchMasterData();
+    };
+    initApp();
   }, []);
 
   const fetchMasterData = async () => {
     try {
       const [resHistory, resCustomers, resFees] = await Promise.all([
-        fetch("/api/history").then((r) => r.json()),
-        fetch("/api/customers").then((r) => r.json()),
-        fetch("/api/fees").then((r) => r.json()),
+        getHistory(),
+        getCustomers(),
+        getFees(),
       ]);
       setHistory(resHistory || []);
       setCustomers(resCustomers || []);
       setFees(resFees || []);
     } catch (err) {
-      console.error("Lỗi lấy dữ liệu từ server:", err);
+      console.error("Lỗi lấy dữ liệu từ service:", err);
     }
   };
 
@@ -157,25 +176,14 @@ export default function App() {
       reader.readAsDataURL(file);
       const base64Content = await fileLoadedPromise;
 
-      // Call extraction endpoint
-      const response = await fetch("/api/extract", {
-        method: "POST",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({
-          fileBase64: base64Content,
-          mimeType: file.type || "application/octet-stream",
-          fileName: file.name,
-        }),
+      // Extract via service (auto falls back to client-side Gemini when on Vercel)
+      const extracted = await extractDocumentData({
+        fileBase64: base64Content,
+        mimeType: file.type || "application/octet-stream",
+        fileName: file.name,
       });
 
       clearInterval(interval);
-
-      if (!response.ok) {
-        const errJson = await response.json();
-        throw new Error(errJson.error || "Không thể phân tích chứng từ.");
-      }
-
-      const extracted = await response.json();
 
       // Formulate unique IDs for extracted charges
       const parsedCharges: ChargeItem[] = (extracted.charges || []).map((charge: any) => ({
@@ -255,28 +263,12 @@ export default function App() {
     }
     setIsSaving(true);
     try {
-      const response = await fetch("/api/history", {
-        method: "POST",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify(activeNote),
-      });
-
-      if (!response.ok) {
-        throw new Error("Không thể lưu hóa đơn.");
-      }
-
-      const resJson = await response.json();
+      const savedNote = await saveHistoryNote(activeNote);
       alert("Đã lưu trữ Debit Note thành công!");
-      
-      // Update local history lists
       fetchMasterData();
-      
-      // Bind exact ID back to avoid duplications on subsequent edits
-      if (resJson.debitNote) {
-        setActiveNote(resJson.debitNote);
-      }
-    } catch (err) {
-      alert("Xảy ra lỗi khi lưu hóa đơn: " + err);
+      setActiveNote(savedNote);
+    } catch (err: any) {
+      alert("Xảy ra lỗi khi lưu hóa đơn: " + (err.message || err));
     } finally {
       setIsSaving(false);
     }
@@ -302,8 +294,7 @@ export default function App() {
   // Action: Delete historic note
   const handleDeleteHistoryNote = async (id: string) => {
     try {
-      const response = await fetch(`/api/history/${id}`, { method: "DELETE" });
-      if (!response.ok) throw new Error();
+      await deleteHistoryNote(id);
       
       // If we deleted the active note, replace form with fresh values
       if (activeNote.id === id) {
@@ -318,12 +309,7 @@ export default function App() {
   // Action: Manage Customer Add/Delete
   const handleAddMasterCustomer = async (cust: Customer) => {
     try {
-      const response = await fetch("/api/customers", {
-        method: "POST",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify(cust),
-      });
-      if (!response.ok) throw new Error();
+      await saveCustomer(cust);
       fetchMasterData();
     } catch {
       alert("Không thể đồng bộ dữ liệu Khách hàng mới.");
@@ -332,7 +318,7 @@ export default function App() {
 
   const handleDeleteMasterCustomer = async (id: string) => {
     try {
-      await fetch(`/api/customers/${id}`, { method: "DELETE" });
+      await deleteCustomer(id);
       fetchMasterData();
     } catch {
       alert("Thất bại khi xóa khách hàng.");
@@ -342,12 +328,7 @@ export default function App() {
   // Action: Manage Fee Add/Delete
   const handleAddMasterFee = async (fee: Fee) => {
     try {
-      const response = await fetch("/api/fees", {
-        method: "POST",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify(fee),
-      });
-      if (!response.ok) throw new Error();
+      await saveFee(fee);
       fetchMasterData();
     } catch {
       alert("Không thể lưu loại phí mới vào database.");
@@ -356,7 +337,7 @@ export default function App() {
 
   const handleDeleteMasterFee = async (id: string) => {
     try {
-      await fetch(`/api/fees/${id}`, { method: "DELETE" });
+      await deleteFee(id);
       fetchMasterData();
     } catch {
       alert("Thất bại khi xóa loại phí.");
@@ -369,15 +350,39 @@ export default function App() {
       {/* GLOBAL APPNET TOP BAR (Hidden when printing!) */}
       <header className="bg-slate-900 text-white shadow-sm border-b border-slate-800 print:hidden select-none shrink-0">
         <div className="max-w-[1600px] mx-auto px-4 sm:px-6 lg:px-8 py-4 flex items-center justify-between">
-          <div className="flex items-center gap-3">
-            <div className="bg-emerald-600 p-2 rounded-md shadow-inner">
-              <FileText size={20} className="text-white" />
+          <div className="flex items-center gap-4">
+            <div className="flex items-center gap-3">
+              <div className="bg-emerald-600 p-2 rounded-md shadow-inner">
+                <FileText size={20} className="text-white" />
+              </div>
+              <div>
+                <h1 className="text-lg font-extrabold tracking-tight">LOGI-NOTE MANAGER</h1>
+                <span className="text-[10px] text-emerald-400 font-bold block leading-none font-mono tracking-widest mt-0.5">
+                  VERSION 2.1 • A4 PRINT ENGINE
+                </span>
+              </div>
             </div>
-            <div>
-              <h1 className="text-lg font-extrabold tracking-tight">LOGI-NOTE MANAGER</h1>
-              <span className="text-[10px] text-emerald-400 font-bold block leading-none font-mono tracking-widest mt-0.5">
-                VERSION 2.1 • A4 PRINT ENGINE
-              </span>
+
+            {/* Safe platform detection indicator */}
+            <div 
+              className={`flex items-center gap-1.5 px-2.5 py-1 text-[11px] font-bold rounded-full select-none ${
+                isOffline 
+                  ? "bg-sky-500/10 text-sky-400 border border-sky-500/20" 
+                  : "bg-emerald-500/10 text-emerald-400 border border-emerald-500/20"
+              }`}
+              title={isOffline ? "Ứng dụng hoạt động thông qua Đồng bộ hóa trình duyệt (LocalStorage & Trực tiếp Gemini API)" : "Ứng dụng kết nối tới máy chủ Express của AI Studio"}
+            >
+              {isOffline ? (
+                <>
+                  <WifiOff size={12} />
+                  <span>TRÌNH DUYỆT (VERCEL)</span>
+                </>
+              ) : (
+                <>
+                  <Wifi size={12} />
+                  <span>MÁY CHỦ (AI STUDIO)</span>
+                </>
+              )}
             </div>
           </div>
 
