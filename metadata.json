@@ -1,0 +1,6 @@
+{
+  "name": "Debit Note Generator",
+  "description": "A full-stack tool to automatically extract, edit, manage, and print standard A4 Debit Notes from document files using Gemini AI API with history list and master fee/customer database support.",
+  "requestFramePermissions": [],
+  "majorCapabilities": ["MAJOR_CAPABILITY_SERVER_SIDE_GEMINI_API"]
+}
