@@ -9,8 +9,29 @@ import dotenv from "dotenv";
 // Load environment variables
 dotenv.config();
 
-const __filename = fileURLToPath(import.meta.url);
-const __dirname = path.dirname(__filename);
+let _filename = "";
+let _dirname = "";
+
+try {
+  const metaUrl = typeof import.meta !== "undefined" && import.meta.url ? import.meta.url : "";
+  if (metaUrl) {
+    _filename = fileURLToPath(metaUrl);
+    _dirname = path.dirname(_filename);
+  }
+} catch (e) {
+  // ignore
+}
+
+if (!_filename && typeof __filename !== "undefined") {
+  _filename = __filename;
+}
+if (!_dirname && typeof __dirname !== "undefined") {
+  _dirname = __dirname;
+}
+
+if (!_dirname) {
+  _dirname = process.cwd();
+}
 
 const app = express();
 const PORT = 3000;
@@ -20,7 +41,7 @@ app.use(express.json({ limit: "50mb" }));
 app.use(express.urlencoded({ limit: "50mb", extended: true }));
 
 // Data Directory and persistence setup
-const DATA_DIR = path.join(__dirname, "data");
+const DATA_DIR = path.join(_dirname, "data");
 if (!fs.existsSync(DATA_DIR)) {
   fs.mkdirSync(DATA_DIR, { recursive: true });
 }
@@ -91,17 +112,23 @@ let debitHistoryList = readJsonFile(HISTORY_FILE, [] as any[]);
 writeJsonFile(FEES_FILE, feesList);
 writeJsonFile(CUSTOMERS_FILE, customersList);
 
-// Initialize Gemini Client
+// Lazy Dynamic Gemini Client Setup
 let ai: GoogleGenAI | null = null;
-if (process.env.GEMINI_API_KEY) {
+function getGeminiClient(): GoogleGenAI {
+  if (ai) return ai;
+  const key = process.env.GEMINI_API_KEY;
+  if (!key) {
+    throw new Error("GEMINI_API_KEY is not configured on the server. Please add GEMINI_API_KEY into your Vercel Environment Variables.");
+  }
   ai = new GoogleGenAI({
-    apiKey: process.env.GEMINI_API_KEY,
+    apiKey: key,
     httpOptions: {
       headers: {
         "User-Agent": "aistudio-build",
       },
     },
   });
+  return ai;
 }
 
 // --- API ROUTES ---
@@ -201,9 +228,12 @@ app.post("/api/extract", async (req, res) => {
       return res.status(400).json({ error: "Missing fileBase64 or mimeType" });
     }
 
-    if (!process.env.GEMINI_API_KEY || !ai) {
+    let aiInstance: GoogleGenAI;
+    try {
+      aiInstance = getGeminiClient();
+    } catch (err: any) {
       return res.status(500).json({
-        error: "GEMINI_API_KEY is not configured on the server. Please add it to your Settings > Secrets.",
+        error: err.message || "GEMINI_API_KEY is not configured on the server. Please check your Vercel Environment Variables.",
       });
     }
 
@@ -305,7 +335,7 @@ app.post("/api/extract", async (req, res) => {
         for (let attempt = 1; attempt <= 3; attempt++) {
           try {
             console.log(`Attempting structured data extraction with model: ${model} (attempt ${attempt}/3)`);
-            const res = await ai!.models.generateContent({
+            const res = await aiInstance.models.generateContent({
               model: model,
               contents: contents,
               config: {
