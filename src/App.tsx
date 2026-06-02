@@ -171,11 +171,32 @@ export default function App() {
       clearInterval(interval);
 
       if (!response.ok) {
-        const errJson = await response.json();
-        throw new Error(errJson.error || "Không thể phân tích chứng từ.");
+        let errMsg = "Không thể phân tích chứng từ.";
+        try {
+          const errText = await response.text();
+          try {
+            const errJson = JSON.parse(errText);
+            errMsg = errJson.error || errMsg;
+          } catch {
+            if (errText.includes("GEMINI_API_KEY")) {
+              errMsg = "GEMINI_API_KEY chưa được thiết lập hoặc chưa đúng định dạng. Vui lòng thêm/kiểm tra lại GEMINI_API_KEY trong cài đặt Environment Variables của Vercel.";
+            } else {
+              errMsg = `Lỗi hệ thống (${response.status}): Phản hồi không hợp lệ từ máy chủ. Hãy đảm bảo bạn đã triển khai Vercel theo đúng tệp cấu hình mới cập nhật.`;
+            }
+          }
+        } catch {
+          errMsg = `Không thể kết nối đến máy chủ (Mã trạng thái: ${response.status})`;
+        }
+        throw new Error(errMsg);
       }
 
-      const extracted = await response.json();
+      let extracted: any;
+      try {
+        const responseText = await response.text();
+        extracted = JSON.parse(responseText);
+      } catch (parseErr) {
+        throw new Error("Phản hồi từ máy chủ không hợp lệ (không phải định dạng JSON). Hãy đảm bảo bạn đã đẩy các tệp mới (vercel.json và /api/index.ts) lên Vercel.");
+      }
 
       // Formulate unique IDs for extracted charges
       const parsedCharges: ChargeItem[] = (extracted.charges || []).map((charge: any) => ({
