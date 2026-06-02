@@ -9,29 +9,8 @@ import dotenv from "dotenv";
 // Load environment variables
 dotenv.config();
 
-let _filename = "";
-let _dirname = "";
-
-try {
-  const metaUrl = typeof import.meta !== "undefined" && import.meta.url ? import.meta.url : "";
-  if (metaUrl) {
-    _filename = fileURLToPath(metaUrl);
-    _dirname = path.dirname(_filename);
-  }
-} catch (e) {
-  // ignore
-}
-
-if (!_filename && typeof __filename !== "undefined") {
-  _filename = __filename;
-}
-if (!_dirname && typeof __dirname !== "undefined") {
-  _dirname = __dirname;
-}
-
-if (!_dirname) {
-  _dirname = process.cwd();
-}
+const __filename = fileURLToPath(import.meta.url);
+const __dirname = path.dirname(__filename);
 
 const app = express();
 const PORT = 3000;
@@ -41,50 +20,20 @@ app.use(express.json({ limit: "50mb" }));
 app.use(express.urlencoded({ limit: "50mb", extended: true }));
 
 // Data Directory and persistence setup
-const isVercel = !!process.env.VERCEL;
-const originalDataDir = path.join(_dirname, "data");
-const DATA_DIR = isVercel ? "/tmp/data" : originalDataDir;
-
+const DATA_DIR = path.join(__dirname, "data");
 if (!fs.existsSync(DATA_DIR)) {
-  try {
-    fs.mkdirSync(DATA_DIR, { recursive: true });
-  } catch (err) {
-    console.warn("Failed to create DATA_DIR, trying fallback:", err);
-  }
+  fs.mkdirSync(DATA_DIR, { recursive: true });
 }
 
 const HISTORY_FILE = path.join(DATA_DIR, "history.json");
 const FEES_FILE = path.join(DATA_DIR, "fees.json");
 const CUSTOMERS_FILE = path.join(DATA_DIR, "customers.json");
 
-// Copy default files if in Vercel to allow writes in /tmp
-if (isVercel) {
-  const filesToCopy = ["fees.json", "customers.json", "history.json"];
-  for (const file of filesToCopy) {
-    const srcPath = path.join(originalDataDir, file);
-    const destPath = path.join(DATA_DIR, file);
-    if (!fs.existsSync(destPath)) {
-      try {
-        if (fs.existsSync(srcPath)) {
-          fs.copyFileSync(srcPath, destPath);
-          console.log(`Copied seed file ${file} from ${srcPath} to ${destPath}`);
-        }
-      } catch (err) {
-        console.error(`Error copying seed file ${file} to /tmp/data:`, err);
-      }
-    }
-  }
-}
-
 // Helper read/write files safely
 function readJsonFile<T>(filePath: string, defaultData: T): T {
   try {
     if (!fs.existsSync(filePath)) {
-      try {
-        fs.writeFileSync(filePath, JSON.stringify(defaultData, null, 2), "utf8");
-      } catch (writeErr) {
-        console.warn(`Could not write default data to ${filePath}:`, writeErr);
-      }
+      fs.writeFileSync(filePath, JSON.stringify(defaultData, null, 2), "utf8");
       return defaultData;
     }
     const content = fs.readFileSync(filePath, "utf8");
@@ -142,23 +91,17 @@ let debitHistoryList = readJsonFile(HISTORY_FILE, [] as any[]);
 writeJsonFile(FEES_FILE, feesList);
 writeJsonFile(CUSTOMERS_FILE, customersList);
 
-// Lazy Dynamic Gemini Client Setup
+// Initialize Gemini Client
 let ai: GoogleGenAI | null = null;
-function getGeminiClient(): GoogleGenAI {
-  if (ai) return ai;
-  const key = process.env.GEMINI_API_KEY;
-  if (!key) {
-    throw new Error("GEMINI_API_KEY is not configured on the server. Please add GEMINI_API_KEY into your Vercel Environment Variables.");
-  }
+if (process.env.GEMINI_API_KEY) {
   ai = new GoogleGenAI({
-    apiKey: key,
+    apiKey: process.env.GEMINI_API_KEY,
     httpOptions: {
       headers: {
         "User-Agent": "aistudio-build",
       },
     },
   });
-  return ai;
 }
 
 // --- API ROUTES ---
@@ -258,12 +201,9 @@ app.post("/api/extract", async (req, res) => {
       return res.status(400).json({ error: "Missing fileBase64 or mimeType" });
     }
 
-    let aiInstance: GoogleGenAI;
-    try {
-      aiInstance = getGeminiClient();
-    } catch (err: any) {
+    if (!process.env.GEMINI_API_KEY || !ai) {
       return res.status(500).json({
-        error: err.message || "GEMINI_API_KEY is not configured on the server. Please check your Vercel Environment Variables.",
+        error: "GEMINI_API_KEY is not configured on the server. Please add it to your Settings > Secrets.",
       });
     }
 
@@ -365,7 +305,7 @@ app.post("/api/extract", async (req, res) => {
         for (let attempt = 1; attempt <= 3; attempt++) {
           try {
             console.log(`Attempting structured data extraction with model: ${model} (attempt ${attempt}/3)`);
-            const res = await aiInstance.models.generateContent({
+            const res = await ai!.models.generateContent({
               model: model,
               contents: contents,
               config: {
@@ -451,8 +391,4 @@ async function startServer() {
   });
 }
 
-export default app;
-
-if (process.env.NODE_ENV !== "production" || !process.env.VERCEL) {
-  startServer();
-}
+startServer();
