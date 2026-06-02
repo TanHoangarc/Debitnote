@@ -41,20 +41,50 @@ app.use(express.json({ limit: "50mb" }));
 app.use(express.urlencoded({ limit: "50mb", extended: true }));
 
 // Data Directory and persistence setup
-const DATA_DIR = path.join(_dirname, "data");
+const isVercel = !!process.env.VERCEL;
+const originalDataDir = path.join(_dirname, "data");
+const DATA_DIR = isVercel ? "/tmp/data" : originalDataDir;
+
 if (!fs.existsSync(DATA_DIR)) {
-  fs.mkdirSync(DATA_DIR, { recursive: true });
+  try {
+    fs.mkdirSync(DATA_DIR, { recursive: true });
+  } catch (err) {
+    console.warn("Failed to create DATA_DIR, trying fallback:", err);
+  }
 }
 
 const HISTORY_FILE = path.join(DATA_DIR, "history.json");
 const FEES_FILE = path.join(DATA_DIR, "fees.json");
 const CUSTOMERS_FILE = path.join(DATA_DIR, "customers.json");
 
+// Copy default files if in Vercel to allow writes in /tmp
+if (isVercel) {
+  const filesToCopy = ["fees.json", "customers.json", "history.json"];
+  for (const file of filesToCopy) {
+    const srcPath = path.join(originalDataDir, file);
+    const destPath = path.join(DATA_DIR, file);
+    if (!fs.existsSync(destPath)) {
+      try {
+        if (fs.existsSync(srcPath)) {
+          fs.copyFileSync(srcPath, destPath);
+          console.log(`Copied seed file ${file} from ${srcPath} to ${destPath}`);
+        }
+      } catch (err) {
+        console.error(`Error copying seed file ${file} to /tmp/data:`, err);
+      }
+    }
+  }
+}
+
 // Helper read/write files safely
 function readJsonFile<T>(filePath: string, defaultData: T): T {
   try {
     if (!fs.existsSync(filePath)) {
-      fs.writeFileSync(filePath, JSON.stringify(defaultData, null, 2), "utf8");
+      try {
+        fs.writeFileSync(filePath, JSON.stringify(defaultData, null, 2), "utf8");
+      } catch (writeErr) {
+        console.warn(`Could not write default data to ${filePath}:`, writeErr);
+      }
       return defaultData;
     }
     const content = fs.readFileSync(filePath, "utf8");
