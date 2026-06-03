@@ -27,6 +27,9 @@ if (!fs.existsSync(firebaseConfigPath)) {
   firebaseConfigPath = path.join(__dirname, "firebase-applet-config.json");
 }
 if (!fs.existsSync(firebaseConfigPath)) {
+  firebaseConfigPath = path.join(__dirname, "..", "firebase-applet-config.json");
+}
+if (!fs.existsSync(firebaseConfigPath)) {
   throw new Error("Missing Firebase Applet configuration file: firebase-applet-config.json");
 }
 const firebaseConfig = JSON.parse(fs.readFileSync(firebaseConfigPath, "utf8"));
