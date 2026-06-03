@@ -5,7 +5,7 @@ import fs from "fs";
 import { GoogleGenAI, Type } from "@google/genai";
 import mammoth from "mammoth";
 import dotenv from "dotenv";
-import { initializeApp } from "firebase/app";
+import { initializeApp, getApps, getApp } from "firebase/app";
 import { getFirestore, doc, getDocs, setDoc, deleteDoc, collection } from "firebase/firestore";
 import { firebaseConfigStatic } from "./firebase-config";
 
@@ -60,7 +60,7 @@ if (fs.existsSync(firebaseConfigPath)) {
   console.log("Firebase config file not found, utilizing bundled static configuration fallback.");
 }
 
-const firebaseApp = initializeApp(firebaseConfig);
+const firebaseApp = getApps().length === 0 ? initializeApp(firebaseConfig) : getApp();
 const db = getFirestore(firebaseApp, firebaseConfig.firestoreDatabaseId);
 
 // --- FIREBASE ERROR HANDLING SUPPORT ---
@@ -477,12 +477,10 @@ app.post("/api/extract", async (req, res) => {
     };
 
     async function generateJsonWithFallback(contents: any) {
-      // Vercel serverless functions have a 10s execution timeout on Free/Hobby plans. Keep fallbacks minimal on Vercel.
+      // Prioritize gemini-3.5-flash with low thinking level for fast, sub-2s response times, and fallback to gemini-flash-latest
       const isVercel = !!process.env.VERCEL;
-      const models = isVercel 
-        ? ["gemini-3.5-flash"] 
-        : ["gemini-3.5-flash", "gemini-2.5-flash", "gemini-flash-latest"];
-      const maxAttempts = isVercel ? 2 : 3;
+      const models = ["gemini-3.5-flash", "gemini-flash-latest"];
+      const maxAttempts = isVercel ? 1 : 2;
       let lastError: any = null;
 
       for (const model of models) {
@@ -495,6 +493,7 @@ app.post("/api/extract", async (req, res) => {
               config: {
                 responseMimeType: "application/json",
                 responseSchema: debitNoteSchema,
+                ...(model === "gemini-3.5-flash" ? { thinkingConfig: { thinkingLevel: "LOW" as any } } : {})
               }
             });
             if (res && res.text) {

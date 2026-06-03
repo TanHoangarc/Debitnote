@@ -127,11 +127,75 @@ export default function App() {
     }
   };
 
+  // Client-side image resizing and optimization to prevent 4.5MB Vercel payload limit crashes
+  const resizeImageIfNeeded = (file: File): Promise<string> => {
+    return new Promise((resolve) => {
+      const reader = new FileReader();
+      reader.onload = (e) => {
+        const img = new Image();
+        img.onload = () => {
+          const maxDim = 1600;
+          let width = img.width;
+          let height = img.height;
+          
+          if (width > maxDim || height > maxDim) {
+            if (width > height) {
+              height = Math.round((height * maxDim) / width);
+              width = maxDim;
+            } else {
+              width = Math.round((width * maxDim) / height);
+              height = maxDim;
+            }
+            
+            const canvas = document.createElement("canvas");
+            canvas.width = width;
+            canvas.height = height;
+            const ctx = canvas.getContext("2d");
+            if (ctx) {
+              ctx.drawImage(img, 0, 0, width, height);
+              // Use JPEG with 0.8 quality to drastically compress base64 payload size
+              const compressedBase64 = canvas.toDataURL("image/jpeg", 0.82);
+              resolve(compressedBase64.split(",")[1]);
+              return;
+            }
+          }
+          // If already small or error, resolve original
+          if (e.target?.result) {
+            resolve((e.target.result as string).split(",")[1]);
+          } else {
+            resolve("");
+          }
+        };
+        img.onerror = () => {
+          if (e.target?.result) {
+            resolve((e.target.result as string).split(",")[1]);
+          } else {
+            resolve("");
+          }
+        };
+        if (e.target?.result) {
+          img.src = e.target.result as string;
+        } else {
+          resolve("");
+        }
+      };
+      reader.readAsDataURL(file);
+    });
+  };
+
   // Safe file upload handler
   const handleFileUpload = async (file: File) => {
     setIsExtracting(true);
     setExtractError(null);
     setExtractProgressMessage(loadingStatusTimeline[0]);
+
+    // Serverless platforms like Vercel have a strict 4.5MB payload size limit.
+    // Check non-image file sizes before uploading to avoid server crashes.
+    if (!file.type.startsWith("image/") && file.size > 3.8 * 1024 * 1024) {
+      setIsExtracting(false);
+      setExtractError("Kích thước tệp quá lớn (vượt quá 3.8MB). Vui lòng nén file PDF hoặc chọn tệp nhỏ hơn để tránh quá tải đường truyền.");
+      return;
+    }
 
     // Cycling status messages realistically
     let step = 0;
@@ -143,19 +207,24 @@ export default function App() {
     }, 1500);
 
     try {
-      const reader = new FileReader();
-      
-      const fileLoadedPromise = new Promise<string>((resolve) => {
-        reader.onload = () => {
-          const res = reader.result as string;
-          // Strip data:image/png;base64, prefix
-          const base64Data = res.split(",")[1];
-          resolve(base64Data);
-        };
-      });
+      let base64Content = "";
 
-      reader.readAsDataURL(file);
-      const base64Content = await fileLoadedPromise;
+      if (file.type.startsWith("image/")) {
+        setExtractProgressMessage("Đang tối ưu hóa dung lượng hình ảnh...");
+        base64Content = await resizeImageIfNeeded(file);
+      } else {
+        const reader = new FileReader();
+        const fileLoadedPromise = new Promise<string>((resolve) => {
+          reader.onload = () => {
+            const res = reader.result as string;
+            // Strip data:image/png;base64, prefix
+            const base64Data = res.split(",")[1];
+            resolve(base64Data);
+          };
+        });
+        reader.readAsDataURL(file);
+        base64Content = await fileLoadedPromise;
+      }
 
       // Call extraction endpoint
       const response = await fetch("/api/extract", {
