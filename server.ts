@@ -5,6 +5,8 @@ import fs from "fs";
 import { GoogleGenAI, Type } from "@google/genai";
 import mammoth from "mammoth";
 import dotenv from "dotenv";
+import { initializeApp } from "firebase/app";
+import { getFirestore, doc, getDocs, setDoc, deleteDoc, collection } from "firebase/firestore";
 
 // Load environment variables
 dotenv.config();
@@ -19,37 +21,47 @@ const PORT = 3000;
 app.use(express.json({ limit: "50mb" }));
 app.use(express.urlencoded({ limit: "50mb", extended: true }));
 
-// Data Directory and persistence setup
-const DATA_DIR = path.join(__dirname, "data");
-if (!fs.existsSync(DATA_DIR)) {
-  fs.mkdirSync(DATA_DIR, { recursive: true });
+// Initialize Firebase SDK
+const firebaseConfigPath = path.join(__dirname, "firebase-applet-config.json");
+if (!fs.existsSync(firebaseConfigPath)) {
+  throw new Error("Missing Firebase Applet configuration file: firebase-applet-config.json");
+}
+const firebaseConfig = JSON.parse(fs.readFileSync(firebaseConfigPath, "utf8"));
+const firebaseApp = initializeApp(firebaseConfig);
+const db = getFirestore(firebaseApp, firebaseConfig.firestoreDatabaseId);
+
+// --- FIREBASE ERROR HANDLING SUPPORT ---
+enum OperationType {
+  CREATE = 'create',
+  UPDATE = 'update',
+  DELETE = 'delete',
+  LIST = 'list',
+  GET = 'get',
+  WRITE = 'write',
 }
 
-const HISTORY_FILE = path.join(DATA_DIR, "history.json");
-const FEES_FILE = path.join(DATA_DIR, "fees.json");
-const CUSTOMERS_FILE = path.join(DATA_DIR, "customers.json");
-
-// Helper read/write files safely
-function readJsonFile<T>(filePath: string, defaultData: T): T {
-  try {
-    if (!fs.existsSync(filePath)) {
-      fs.writeFileSync(filePath, JSON.stringify(defaultData, null, 2), "utf8");
-      return defaultData;
-    }
-    const content = fs.readFileSync(filePath, "utf8");
-    return JSON.parse(content) as T;
-  } catch (error) {
-    console.error(`Error reading file ${filePath}:`, error);
-    return defaultData;
+interface FirestoreErrorInfo {
+  error: string;
+  operationType: OperationType;
+  path: string | null;
+  authInfo: {
+    userId?: string | null;
+    email?: string | null;
   }
 }
 
-function writeJsonFile<T>(filePath: string, data: T): void {
-  try {
-    fs.writeFileSync(filePath, JSON.stringify(data, null, 2), "utf8");
-  } catch (error) {
-    console.error(`Error writing file ${filePath}:`, error);
-  }
+function handleFirestoreError(error: unknown, operationType: OperationType, path: string | null) {
+  const errInfo: FirestoreErrorInfo = {
+    error: error instanceof Error ? error.message : String(error),
+    authInfo: {
+      userId: null,
+      email: null,
+    },
+    operationType,
+    path
+  };
+  console.error('Firestore Error: ', JSON.stringify(errInfo));
+  throw new Error(JSON.stringify(errInfo));
 }
 
 // Seed Initial Fees List
@@ -82,15 +94,6 @@ const defaultCustomers = [
   }
 ];
 
-// Load current lists from disk
-let feesList = readJsonFile(FEES_FILE, defaultFees);
-let customersList = readJsonFile(CUSTOMERS_FILE, defaultCustomers);
-let debitHistoryList = readJsonFile(HISTORY_FILE, [] as any[]);
-
-// Ensure databases stay synchronized
-writeJsonFile(FEES_FILE, feesList);
-writeJsonFile(CUSTOMERS_FILE, customersList);
-
 // Initialize Gemini Client
 let ai: GoogleGenAI | null = null;
 if (process.env.GEMINI_API_KEY) {
@@ -107,90 +110,218 @@ if (process.env.GEMINI_API_KEY) {
 // --- API ROUTES ---
 
 // 1. Master Fees Endpoints
-app.get("/api/fees", (req, res) => {
-  feesList = readJsonFile(FEES_FILE, defaultFees);
-  res.json(feesList);
+app.get("/api/fees", async (req, res) => {
+  try {
+    const querySnapshot = await getDocs(collection(db, "fees"));
+    let fees = querySnapshot.docs.map((doc) => ({ id: doc.id, ...doc.data() }));
+
+    // In case no fees exist in Firestore yet, seed defaults
+    if (fees.length === 0) {
+      console.log("Seeding default fees to Firestore...");
+      for (const fee of defaultFees) {
+        await setDoc(doc(db, "fees", fee.id), {
+          id: fee.id,
+          description: fee.description,
+          vatPercent: fee.vatPercent,
+          isPayOnBehalf: fee.isPayOnBehalf,
+        });
+      }
+      fees = defaultFees;
+    }
+    res.json(fees);
+  } catch (error) {
+    try {
+      handleFirestoreError(error, OperationType.LIST, "fees");
+    } catch (err: any) {
+      res.status(500).json({ error: err.message });
+    }
+  }
 });
 
-app.post("/api/fees", (req, res) => {
-  const newFee = req.body;
-  if (!newFee.id) {
-    newFee.id = Math.random().toString(36).substring(2, 9);
+app.post("/api/fees", async (req, res) => {
+  try {
+    const newFee = req.body;
+    if (!newFee.id) {
+      newFee.id = Math.random().toString(36).substring(2, 9);
+    }
+    const formattedFee = {
+      id: String(newFee.id),
+      description: String(newFee.description || ""),
+      vatPercent: Number(newFee.vatPercent) || 0,
+      isPayOnBehalf: Boolean(newFee.isPayOnBehalf),
+    };
+    await setDoc(doc(db, "fees", formattedFee.id), formattedFee);
+    res.json({ success: true, fee: formattedFee });
+  } catch (error) {
+    try {
+      handleFirestoreError(error, OperationType.WRITE, "fees");
+    } catch (err: any) {
+      res.status(500).json({ error: err.message });
+    }
   }
-  const existingIndex = feesList.findIndex((f) => f.id === newFee.id);
-  if (existingIndex >= 0) {
-    feesList[existingIndex] = newFee;
-  } else {
-    feesList.push(newFee);
-  }
-  writeJsonFile(FEES_FILE, feesList);
-  res.json({ success: true, fee: newFee });
 });
 
-app.delete("/api/fees/:id", (req, res) => {
+app.delete("/api/fees/:id", async (req, res) => {
   const { id } = req.params;
-  feesList = feesList.filter((f) => f.id !== id);
-  writeJsonFile(FEES_FILE, feesList);
-  res.json({ success: true });
+  try {
+    await deleteDoc(doc(db, "fees", id));
+    res.json({ success: true });
+  } catch (error) {
+    try {
+      handleFirestoreError(error, OperationType.DELETE, `fees/${id}`);
+    } catch (err: any) {
+      res.status(500).json({ error: err.message });
+    }
+  }
 });
 
 // 2. Master Customers Endpoints
-app.get("/api/customers", (req, res) => {
-  customersList = readJsonFile(CUSTOMERS_FILE, defaultCustomers);
-  res.json(customersList);
+app.get("/api/customers", async (req, res) => {
+  try {
+    const querySnapshot = await getDocs(collection(db, "customers"));
+    let customers = querySnapshot.docs.map((doc) => ({ id: doc.id, ...doc.data() }));
+
+    // Seed defaults if empty
+    if (customers.length === 0) {
+      console.log("Seeding default customers to Firestore...");
+      for (const cust of defaultCustomers) {
+        await setDoc(doc(db, "customers", cust.id), {
+          id: cust.id,
+          name: cust.name,
+          taxId: cust.taxId,
+          address: cust.address,
+        });
+      }
+      customers = defaultCustomers;
+    }
+    res.json(customers);
+  } catch (error) {
+    try {
+      handleFirestoreError(error, OperationType.LIST, "customers");
+    } catch (err: any) {
+      res.status(500).json({ error: err.message });
+    }
+  }
 });
 
-app.post("/api/customers", (req, res) => {
-  const newCustomer = req.body;
-  if (!newCustomer.id) {
-    newCustomer.id = Math.random().toString(36).substring(2, 9);
+app.post("/api/customers", async (req, res) => {
+  try {
+    const newCustomer = req.body;
+    if (!newCustomer.id) {
+      newCustomer.id = Math.random().toString(36).substring(2, 9);
+    }
+    const formattedCustomer = {
+      id: String(newCustomer.id),
+      name: String(newCustomer.name || ""),
+      taxId: String(newCustomer.taxId || ""),
+      address: String(newCustomer.address || ""),
+    };
+    await setDoc(doc(db, "customers", formattedCustomer.id), formattedCustomer);
+    res.json({ success: true, customer: formattedCustomer });
+  } catch (error) {
+    try {
+      handleFirestoreError(error, OperationType.WRITE, "customers");
+    } catch (err: any) {
+      res.status(500).json({ error: err.message });
+    }
   }
-  const existingIndex = customersList.findIndex((c) => c.id === newCustomer.id);
-  if (existingIndex >= 0) {
-    customersList[existingIndex] = newCustomer;
-  } else {
-    customersList.push(newCustomer);
-  }
-  writeJsonFile(CUSTOMERS_FILE, customersList);
-  res.json({ success: true, customer: newCustomer });
 });
 
-app.delete("/api/customers/:id", (req, res) => {
+app.delete("/api/customers/:id", async (req, res) => {
   const { id } = req.params;
-  customersList = customersList.filter((c) => c.id !== id);
-  writeJsonFile(CUSTOMERS_FILE, customersList);
-  res.json({ success: true });
+  try {
+    await deleteDoc(doc(db, "customers", id));
+    res.json({ success: true });
+  } catch (error) {
+    try {
+      handleFirestoreError(error, OperationType.DELETE, `customers/${id}`);
+    } catch (err: any) {
+      res.status(500).json({ error: err.message });
+    }
+  }
 });
 
 // 3. Debit History Endpoints
-app.get("/api/history", (req, res) => {
-  debitHistoryList = readJsonFile(HISTORY_FILE, [] as any[]);
-  res.json(debitHistoryList);
+app.get("/api/history", async (req, res) => {
+  try {
+    const querySnapshot = await getDocs(collection(db, "history"));
+    const debitNotes = querySnapshot.docs.map((doc) => ({ id: doc.id, ...doc.data() }));
+    debitNotes.sort((a: any, b: any) => {
+      const dateA = new Date(a.createdAt || 0);
+      const dateB = new Date(b.createdAt || 0);
+      return dateB.getTime() - dateA.getTime();
+    });
+    res.json(debitNotes);
+  } catch (error) {
+    try {
+      handleFirestoreError(error, OperationType.LIST, "history");
+    } catch (err: any) {
+      res.status(500).json({ error: err.message });
+    }
+  }
 });
 
-app.post("/api/history", (req, res) => {
-  const newNote = req.body;
-  if (!newNote.id) {
-    newNote.id = Math.random().toString(36).substring(2, 9);
+app.post("/api/history", async (req, res) => {
+  try {
+    const newNote = req.body;
+    if (!newNote.id) {
+      newNote.id = Math.random().toString(36).substring(2, 9);
+    }
+    if (!newNote.createdAt) {
+      newNote.createdAt = new Date().toISOString();
+    }
+
+    const formattedCharges = (newNote.charges || []).map((charge: any) => ({
+      id: String(charge.id || Math.random().toString(36).substring(2, 9)),
+      description: String(charge.description || "").toUpperCase(),
+      qty: Number(charge.qty) || 1,
+      price: Number(charge.price) || 0,
+      vatPercent: Number(charge.vatPercent) || 0,
+      currency: String(charge.currency || "VND"),
+      isPayOnBehalf: Boolean(charge.isPayOnBehalf),
+    }));
+
+    const formattedNote = {
+      id: String(newNote.id),
+      companyName: String(newNote.companyName || ""),
+      taxId: String(newNote.taxId || ""),
+      address: String(newNote.address || ""),
+      jobNo: String(newNote.jobNo || ""),
+      carrierAgent: String(newNote.carrierAgent || ""),
+      etdEta: String(newNote.etdEta || ""),
+      hblMbl: String(newNote.hblMbl || ""),
+      pol: String(newNote.pol || ""),
+      pod: String(newNote.pod || ""),
+      volume: String(newNote.volume || ""),
+      roe: Number(newNote.roe) || 0,
+      note: String(newNote.note || ""),
+      createdAt: String(newNote.createdAt),
+      charges: formattedCharges,
+    };
+
+    await setDoc(doc(db, "history", formattedNote.id), formattedNote);
+    res.json({ success: true, debitNote: formattedNote });
+  } catch (error) {
+    try {
+      handleFirestoreError(error, OperationType.WRITE, "history");
+    } catch (err: any) {
+      res.status(500).json({ error: err.message });
+    }
   }
-  if (!newNote.createdAt) {
-    newNote.createdAt = new Date().toISOString();
-  }
-  const existingIndex = debitHistoryList.findIndex((n) => n.id === newNote.id);
-  if (existingIndex >= 0) {
-    debitHistoryList[existingIndex] = newNote;
-  } else {
-    debitHistoryList.unshift(newNote); // Put newest first
-  }
-  writeJsonFile(HISTORY_FILE, debitHistoryList);
-  res.json({ success: true, debitNote: newNote });
 });
 
-app.delete("/api/history/:id", (req, res) => {
+app.delete("/api/history/:id", async (req, res) => {
   const { id } = req.params;
-  debitHistoryList = debitHistoryList.filter((n) => n.id !== id);
-  writeJsonFile(HISTORY_FILE, debitHistoryList);
-  res.json({ success: true });
+  try {
+    await deleteDoc(doc(db, "history", id));
+    res.json({ success: true });
+  } catch (error) {
+    try {
+      handleFirestoreError(error, OperationType.DELETE, `history/${id}`);
+    } catch (err: any) {
+      res.status(500).json({ error: err.message });
+    }
+  }
 });
 
 // 4. Gemini Document Data Extraction Endpoint

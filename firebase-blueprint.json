@@ -1,0 +1,101 @@
+{
+  "entities": {
+    "Customer": {
+      "title": "Customer",
+      "description": "Logistics customer details",
+      "type": "object",
+      "properties": {
+        "id": { "type": "string" },
+        "name": { "type": "string" },
+        "taxId": { "type": "string" },
+        "address": { "type": "string" }
+      },
+      "required": ["id", "name", "taxId", "address"]
+    },
+    "Fee": {
+      "title": "Fee",
+      "description": "Master list of charges and service fees",
+      "type": "object",
+      "properties": {
+        "id": { "type": "string" },
+        "description": { "type": "string" },
+        "vatPercent": { "type": "number" },
+        "isPayOnBehalf": { "type": "boolean" }
+      },
+      "required": ["id", "description", "vatPercent", "isPayOnBehalf"]
+    },
+    "ChargeItem": {
+      "title": "Charge Item",
+      "description": "Single charge line item inside a Debit Note",
+      "type": "object",
+      "properties": {
+        "id": { "type": "string" },
+        "description": { "type": "string" },
+        "qty": { "type": "number" },
+        "price": { "type": "number" },
+        "vatPercent": { "type": "number" },
+        "currency": { "type": "string" },
+        "isPayOnBehalf": { "type": "boolean" }
+      },
+      "required": ["id", "description", "qty", "price", "vatPercent", "currency", "isPayOnBehalf"]
+    },
+    "DebitNote": {
+      "title": "Debit Note",
+      "description": "Detailed shipping invoice/debit note draft or completed record",
+      "type": "object",
+      "properties": {
+        "id": { "type": "string" },
+        "companyName": { "type": "string" },
+        "taxId": { "type": "string" },
+        "address": { "type": "string" },
+        "jobNo": { "type": "string" },
+        "carrierAgent": { "type": "string" },
+        "etdEta": { "type": "string" },
+        "hblMbl": { "type": "string" },
+        "pol": { "type": "string" },
+        "pod": { "type": "string" },
+        "volume": { "type": "string" },
+        "volumeQty": { "type": "number" },
+        "volumeUnit": { "type": "string" },
+        "roe": { "type": "number" },
+        "note": { "type": "string" },
+        "createdAt": { "type": "string" },
+        "charges": {
+          "type": "array",
+          "items": { "type": "object", "$ref": "#/entities/ChargeItem" }
+        }
+      },
+      "required": [
+        "id",
+        "companyName",
+        "taxId",
+        "address",
+        "jobNo",
+        "carrierAgent",
+        "etdEta",
+        "hblMbl",
+        "pol",
+        "pod",
+        "volume",
+        "roe",
+        "note",
+        "createdAt",
+        "charges"
+      ]
+    }
+  },
+  "firestore": {
+    "customers": {
+      "schema": "Customer",
+      "description": "Global list of logistics customers"
+    },
+    "fees": {
+      "schema": "Fee",
+      "description": "Global catalog of logistics service fees"
+    },
+    "history": {
+      "schema": "DebitNote",
+      "description": "Global archive of generated debit notes"
+    }
+  }
+}

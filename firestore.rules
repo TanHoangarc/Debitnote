@@ -1,0 +1,86 @@
+rules_version = '2';
+service cloud.firestore {
+  match /databases/{database}/documents {
+    
+    // Global Safety Net catch-all: deny all reads and writes by default
+    match /{document=**} {
+      allow read, write: if false;
+    }
+
+    // --- PRIMITIVE HELPER DEFINITIONS ---
+    function isValidId(id) {
+      return id is string && id.size() <= 128 && id.matches('^[a-zA-Z0-9_\\-]+$');
+    }
+
+    function incoming() {
+      return request.resource.data;
+    }
+
+    function existing() {
+      return resource.data;
+    }
+
+    // --- CUSTOMER VALIDATION BLUEPRINT ---
+    function isValidCustomer(data) {
+      return data.keys().hasAll(['id', 'name', 'taxId', 'address'])
+        && data.keys().size() == 4
+        && data.id is string && data.id.size() <= 128
+        && data.name is string && data.name.size() > 0 && data.name.size() <= 250
+        && data.taxId is string && data.taxId.size() > 0 && data.taxId.size() <= 100
+        && data.address is string && data.address.size() > 0 && data.address.size() <= 500;
+    }
+
+    // --- FEE VALIDATION BLUEPRINT ---
+    function isValidFee(data) {
+      return data.keys().hasAll(['id', 'description', 'vatPercent', 'isPayOnBehalf'])
+        && data.keys().size() == 4
+        && data.id is string && data.id.size() <= 128
+        && data.description is string && data.description.size() > 0 && data.description.size() <= 150
+        && (data.vatPercent is int || data.vatPercent is float)
+        && data.isPayOnBehalf is bool;
+    }
+
+    // --- DEBIT NOTE VALIDATION BLUEPRINT ---
+    function isValidDebitNote(data) {
+      return data.keys().hasAll([
+        'id', 'companyName', 'taxId', 'address', 'jobNo',
+        'carrierAgent', 'etdEta', 'hblMbl', 'pol', 'pod',
+        'volume', 'roe', 'note', 'charges', 'createdAt'
+      ])
+        && data.id is string && data.id.size() <= 128
+        && data.companyName is string && data.companyName.size() <= 250
+        && data.taxId is string && data.taxId.size() <= 100
+        && data.address is string && data.address.size() <= 500
+        && data.jobNo is string && data.jobNo.size() <= 100
+        && data.carrierAgent is string && data.carrierAgent.size() <= 100
+        && data.etdEta is string && data.etdEta.size() <= 100
+        && data.hblMbl is string && data.hblMbl.size() <= 100
+        && data.pol is string && data.pol.size() <= 100
+        && data.pod is string && data.pod.size() <= 100
+        && data.volume is string && data.volume.size() <= 100
+        && (data.roe is int || data.roe is float)
+        && data.note is string && data.note.size() <= 4000
+        && data.charges is list
+        && data.createdAt is string && data.createdAt.size() <= 100;
+    }
+
+    // --- SECURE MATCH BLOCKS ---
+    match /customers/{customerId} {
+      allow read: if true;
+      allow create, update: if isValidId(customerId) && isValidCustomer(incoming());
+      allow delete: if isValidId(customerId);
+    }
+
+    match /fees/{feeId} {
+      allow read: if true;
+      allow create, update: if isValidId(feeId) && isValidFee(incoming());
+      allow delete: if isValidId(feeId);
+    }
+
+    match /history/{noteId} {
+      allow read: if true;
+      allow create, update: if isValidId(noteId) && isValidDebitNote(incoming());
+      allow delete: if isValidId(noteId);
+    }
+  }
+}
