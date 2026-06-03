@@ -22,7 +22,10 @@ app.use(express.json({ limit: "50mb" }));
 app.use(express.urlencoded({ limit: "50mb", extended: true }));
 
 // Initialize Firebase SDK
-const firebaseConfigPath = path.join(__dirname, "firebase-applet-config.json");
+let firebaseConfigPath = path.join(process.cwd(), "firebase-applet-config.json");
+if (!fs.existsSync(firebaseConfigPath)) {
+  firebaseConfigPath = path.join(__dirname, "firebase-applet-config.json");
+}
 if (!fs.existsSync(firebaseConfigPath)) {
   throw new Error("Missing Firebase Applet configuration file: firebase-applet-config.json");
 }
@@ -522,4 +525,9 @@ async function startServer() {
   });
 }
 
-startServer();
+if (!process.env.VERCEL) {
+  startServer();
+}
+
+export default app;
+export { app };
