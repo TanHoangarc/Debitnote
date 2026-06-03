@@ -7,6 +7,7 @@ import mammoth from "mammoth";
 import dotenv from "dotenv";
 import { initializeApp } from "firebase/app";
 import { getFirestore, doc, getDocs, setDoc, deleteDoc, collection } from "firebase/firestore";
+import { firebaseConfigStatic } from "./firebase-config";
 
 // Load environment variables
 dotenv.config();
@@ -21,7 +22,8 @@ const PORT = 3000;
 app.use(express.json({ limit: "50mb" }));
 app.use(express.urlencoded({ limit: "50mb", extended: true }));
 
-// Initialize Firebase SDK
+// Initialize Firebase SDK with a failsafe static config fallback
+let firebaseConfig = firebaseConfigStatic;
 let firebaseConfigPath = path.join(process.cwd(), "firebase-applet-config.json");
 if (!fs.existsSync(firebaseConfigPath)) {
   firebaseConfigPath = path.join(__dirname, "firebase-applet-config.json");
@@ -29,10 +31,18 @@ if (!fs.existsSync(firebaseConfigPath)) {
 if (!fs.existsSync(firebaseConfigPath)) {
   firebaseConfigPath = path.join(__dirname, "..", "firebase-applet-config.json");
 }
-if (!fs.existsSync(firebaseConfigPath)) {
-  throw new Error("Missing Firebase Applet configuration file: firebase-applet-config.json");
+
+if (fs.existsSync(firebaseConfigPath)) {
+  try {
+    firebaseConfig = JSON.parse(fs.readFileSync(firebaseConfigPath, "utf8"));
+    console.log("Successfully loaded Firebase configuration from file.");
+  } catch (err) {
+    console.warn("Error parsing firebase-applet-config.json, falling back to static config:", err);
+  }
+} else {
+  console.log("Firebase config file not found, utilizing bundled static configuration fallback.");
 }
-const firebaseConfig = JSON.parse(fs.readFileSync(firebaseConfigPath, "utf8"));
+
 const firebaseApp = initializeApp(firebaseConfig);
 const db = getFirestore(firebaseApp, firebaseConfig.firestoreDatabaseId);
 
