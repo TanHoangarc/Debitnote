@@ -110,17 +110,24 @@ const defaultCustomers = [
   }
 ];
 
-// Initialize Gemini Client
-let ai: GoogleGenAI | null = null;
-if (process.env.GEMINI_API_KEY) {
-  ai = new GoogleGenAI({
-    apiKey: process.env.GEMINI_API_KEY,
-    httpOptions: {
-      headers: {
-        "User-Agent": "aistudio-build",
+// Initialize Gemini Client Lazily
+let aiClientInstance: GoogleGenAI | null = null;
+function getGeminiClient(): GoogleGenAI {
+  const apiKey = process.env.GEMINI_API_KEY;
+  if (!apiKey) {
+    throw new Error("GEMINI_API_KEY is not configured on the server.");
+  }
+  if (!aiClientInstance) {
+    aiClientInstance = new GoogleGenAI({
+      apiKey: apiKey,
+      httpOptions: {
+        headers: {
+          "User-Agent": "aistudio-build",
+        },
       },
-    },
-  });
+    });
+  }
+  return aiClientInstance;
 }
 
 // --- API ROUTES ---
@@ -348,10 +355,18 @@ app.post("/api/extract", async (req, res) => {
       return res.status(400).json({ error: "Missing fileBase64 or mimeType" });
     }
 
-    if (!process.env.GEMINI_API_KEY || !ai) {
+    const apiKey = process.env.GEMINI_API_KEY;
+    if (!apiKey) {
       return res.status(500).json({
-        error: "GEMINI_API_KEY is not configured on the server. Please add it to your Settings > Secrets.",
+        error: "GEMINI_API_KEY is not configured on the server. Please check your Vercel Environment Variables.",
       });
+    }
+
+    let aiClient: GoogleGenAI;
+    try {
+      aiClient = getGeminiClient();
+    } catch (err: any) {
+      return res.status(500).json({ error: "Failed to initialize Gemini client: " + err.message });
     }
 
     let extractedText = "";
@@ -452,7 +467,7 @@ app.post("/api/extract", async (req, res) => {
         for (let attempt = 1; attempt <= 3; attempt++) {
           try {
             console.log(`Attempting structured data extraction with model: ${model} (attempt ${attempt}/3)`);
-            const res = await ai!.models.generateContent({
+            const res = await aiClient.models.generateContent({
               model: model,
               contents: contents,
               config: {
@@ -516,10 +531,10 @@ app.post("/api/extract", async (req, res) => {
 
 
 // --- INTEGRATE VITE FOR SPA DEVELOPMENT & DEPLOYMENT ---
-import { createServer as createViteServer } from "vite";
 
 async function startServer() {
   if (process.env.NODE_ENV !== "production") {
+    const { createServer: createViteServer } = await import("vite");
     const vite = await createViteServer({
       server: { middlewareMode: true },
       appType: "spa",
