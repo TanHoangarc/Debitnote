@@ -2,7 +2,8 @@
   "version": 2,
   "functions": {
     "api/index.ts": {
-      "includeFiles": "firebase-applet-config.json"
+      "includeFiles": "firebase-applet-config.json",
+      "maxDuration": 60
     }
   },
   "rewrites": [

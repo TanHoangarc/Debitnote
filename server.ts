@@ -12,8 +12,25 @@ import { firebaseConfigStatic } from "./firebase-config";
 // Load environment variables
 dotenv.config();
 
-const __filename = fileURLToPath(import.meta.url);
-const __dirname = path.dirname(__filename);
+let myFilename = "";
+let myDirname = "";
+
+try {
+  if (import.meta && import.meta.url) {
+    myFilename = fileURLToPath(import.meta.url);
+    myDirname = path.dirname(myFilename);
+  } else {
+    // @ts-ignore
+    myFilename = typeof __filename !== "undefined" ? __filename : "";
+    // @ts-ignore
+    myDirname = typeof __dirname !== "undefined" ? __dirname : process.cwd();
+  }
+} catch (e) {
+  // @ts-ignore
+  myFilename = typeof __filename !== "undefined" ? __filename : "";
+  // @ts-ignore
+  myDirname = typeof __dirname !== "undefined" ? __dirname : process.cwd();
+}
 
 const app = express();
 const PORT = 3000;
@@ -26,10 +43,10 @@ app.use(express.urlencoded({ limit: "50mb", extended: true }));
 let firebaseConfig = firebaseConfigStatic;
 let firebaseConfigPath = path.join(process.cwd(), "firebase-applet-config.json");
 if (!fs.existsSync(firebaseConfigPath)) {
-  firebaseConfigPath = path.join(__dirname, "firebase-applet-config.json");
+  firebaseConfigPath = path.join(myDirname, "firebase-applet-config.json");
 }
 if (!fs.existsSync(firebaseConfigPath)) {
-  firebaseConfigPath = path.join(__dirname, "..", "firebase-applet-config.json");
+  firebaseConfigPath = path.join(myDirname, "..", "firebase-applet-config.json");
 }
 
 if (fs.existsSync(firebaseConfigPath)) {
@@ -460,13 +477,18 @@ app.post("/api/extract", async (req, res) => {
     };
 
     async function generateJsonWithFallback(contents: any) {
-      const models = ["gemini-3.5-flash", "gemini-2.5-flash", "gemini-flash-latest"];
+      // Vercel serverless functions have a 10s execution timeout on Free/Hobby plans. Keep fallbacks minimal on Vercel.
+      const isVercel = !!process.env.VERCEL;
+      const models = isVercel 
+        ? ["gemini-3.5-flash"] 
+        : ["gemini-3.5-flash", "gemini-2.5-flash", "gemini-flash-latest"];
+      const maxAttempts = isVercel ? 2 : 3;
       let lastError: any = null;
 
       for (const model of models) {
-        for (let attempt = 1; attempt <= 3; attempt++) {
+        for (let attempt = 1; attempt <= maxAttempts; attempt++) {
           try {
-            console.log(`Attempting structured data extraction with model: ${model} (attempt ${attempt}/3)`);
+            console.log(`Attempting structured data extraction with model: ${model} (attempt ${attempt}/${maxAttempts})`);
             const res = await aiClient.models.generateContent({
               model: model,
               contents: contents,
@@ -480,12 +502,12 @@ app.post("/api/extract", async (req, res) => {
               return res;
             }
           } catch (error: any) {
-            console.warn(`Model ${model} (attempt ${attempt}/3) failed:`, error.message || error);
+            console.warn(`Model ${model} (attempt ${attempt}/${maxAttempts}) failed:`, error.message || error);
             lastError = error;
 
             // If we have more attempts or models, wait with backoff
-            if (model !== models[models.length - 1] || attempt < 3) {
-              const backoffMs = attempt * 1000;
+            if (model !== models[models.length - 1] || attempt < maxAttempts) {
+              const backoffMs = isVercel ? 300 : attempt * 1000;
               console.log(`Retrying after ${backoffMs}ms backoff...`);
               await new Promise((resolve) => setTimeout(resolve, backoffMs));
             }
@@ -499,24 +521,28 @@ app.post("/api/extract", async (req, res) => {
 
     if (useTextPrompt) {
       // Send extracted text to Gemini
-      response = await generateJsonWithFallback([
-        {
-          text: `${promptText}\n\nHere is the raw extracted text of the Word Doc:\n\"\"\"\n${extractedText}\n\"\"\"`
-        }
-      ]);
+      response = await generateJsonWithFallback({
+        parts: [
+          {
+            text: `${promptText}\n\nHere is the raw extracted text of the Word Doc:\n\"\"\"\n${extractedText}\n\"\"\"`
+          }
+        ]
+      });
     } else {
       // Send file content directly as inlineData (multi-modal: PDF or Image)
-      response = await generateJsonWithFallback([
-        {
-          text: promptText,
-        },
-        {
-          inlineData: {
-            mimeType: mimeType,
-            data: fileBase64,
+      response = await generateJsonWithFallback({
+        parts: [
+          {
+            text: promptText,
+          },
+          {
+            inlineData: {
+              mimeType: mimeType,
+              data: fileBase64,
+            }
           }
-        }
-      ]);
+        ]
+      });
     }
 
     const resultText = response.text || "{}";

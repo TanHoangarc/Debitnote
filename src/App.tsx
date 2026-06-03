@@ -171,8 +171,25 @@ export default function App() {
       clearInterval(interval);
 
       if (!response.ok) {
-        const errJson = await response.json();
-        throw new Error(errJson.error || "Không thể phân tích chứng từ.");
+        let errMsg = "Không thể phân tích chứng từ.";
+        try {
+          const errText = await response.text();
+          try {
+            const errJson = JSON.parse(errText);
+            errMsg = errJson.error || errMsg;
+          } catch {
+            errMsg = errText || errMsg;
+          }
+        } catch {
+          errMsg = `HTTP error ${response.status}: ${response.statusText}`;
+        }
+        throw new Error(errMsg);
+      }
+
+      const contentType = response.headers.get("content-type") || "";
+      if (!contentType.includes("application/json")) {
+        const text = await response.text();
+        throw new Error(text || "Máy chủ phản hồi không đúng định dạng JSON.");
       }
 
       const extracted = await response.json();
