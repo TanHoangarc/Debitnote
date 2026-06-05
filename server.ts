@@ -35,9 +35,20 @@ try {
 const app = express();
 const PORT = 3000;
 
-// Set up larger limit for base64 file uploads
-app.use(express.json({ limit: "50mb" }));
-app.use(express.urlencoded({ limit: "50mb", extended: true }));
+// Set up larger limit for base64 file uploads with Vercel safe checks
+app.use((req, res, next) => {
+  if (req.body && typeof req.body === "object" && Object.keys(req.body).length > 0) {
+    return next();
+  }
+  express.json({ limit: "50mb" })(req, res, next);
+});
+
+app.use((req, res, next) => {
+  if (req.body && typeof req.body === "object" && Object.keys(req.body).length > 0) {
+    return next();
+  }
+  express.urlencoded({ limit: "50mb", extended: true })(req, res, next);
+});
 
 // Initialize Firebase SDK with a failsafe static config fallback
 let firebaseConfig = firebaseConfigStatic;
@@ -146,6 +157,25 @@ const defaultCustomers = [
     address: "E4/20 NGUYEN HUU TRI STREET, TAN NHUT COMMUNE, HO CHI MINH CITY, VIETNAM"
   }
 ];
+
+// Helper to safely parse JSON from Gemini text outputs, handling markdown formatting or leading text
+function parseSafeJson(text: string): any {
+  if (!text) return {};
+  const clean = text.trim();
+  try {
+    return JSON.parse(clean);
+  } catch (e) {
+    // Attempt block search
+    try {
+      const match = clean.match(/\{[\s\S]*\}/);
+      if (match) {
+        return JSON.parse(match[0]);
+      }
+    } catch (e2) {}
+    console.error("Failed to parse JSON result from Gemini:", clean);
+    throw e;
+  }
+}
 
 // Initialize Gemini Client Lazily
 let aiClientInstance: GoogleGenAI | null = null;
@@ -301,7 +331,7 @@ app.delete("/api/customers/:id", async (req, res) => {
   }
 });
 
-app.post("/api/search-company", express.json(), async (req, res) => {
+app.post("/api/search-company", async (req, res) => {
   const { query } = req.body;
   if (!query) {
     return res.status(400).json({ error: "Missing query" });
@@ -313,8 +343,8 @@ app.post("/api/search-company", express.json(), async (req, res) => {
 
     // 1. Try DuckDuckGo Scraper on masothue.com to avoid Gemini Search Grounding rate-limiting quotas
     try {
-      console.log(`Starting web crawler search for: ${query}`);
-      const ddgUrl = `https://html.duckduckgo.com/html/?q=site:masothue.com+${encodeURIComponent(query)}`;
+      console.log("Starting web crawler search for: " + query);
+      const ddgUrl = "https://html.duckduckgo.com/html/?q=site:masothue.com+" + encodeURIComponent(query);
       const ddgRes = await fetch(ddgUrl, {
         headers: {
           "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36",
@@ -337,7 +367,7 @@ app.post("/api/search-company", express.json(), async (req, res) => {
         }
 
         if (matchedCompanyUrl) {
-          console.log(`Scraper found URL slug: ${matchedCompanyUrl}`);
+          console.log("Scraper found URL slug: " + matchedCompanyUrl);
           const companyRes = await fetch(matchedCompanyUrl, {
             headers: {
               "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36",
@@ -440,7 +470,7 @@ app.post("/api/search-company", express.json(), async (req, res) => {
       if (textInfo.includes('```json')) {
         textInfo = textInfo.replace(/```json\n?/g, '').replace(/```/g, '');
       }
-      responseData = JSON.parse(textInfo);
+      responseData = parseSafeJson(textInfo);
     }
 
     res.json(responseData);
@@ -713,7 +743,7 @@ app.post("/api/extract", async (req, res) => {
     }
 
     const resultText = response.text || "{}";
-    const data = JSON.parse(resultText);
+    const data = parseSafeJson(resultText);
     data.note = ""; // Ensure notes field starts blank for manual entry as requested
     res.json(data);
   } catch (error: any) {

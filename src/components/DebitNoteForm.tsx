@@ -395,25 +395,26 @@ export default function DebitNoteForm({
         body: JSON.stringify({ query: data.companyName })
       });
       
+      const responseText = await res.text();
+      
       if (!res.ok) {
         let errMsg = `Cổng máy chủ Vercel trả về lỗi HTTP ${res.status}`;
         try {
-          const jsonErr = await res.json();
+          const jsonErr = JSON.parse(responseText);
           if (jsonErr && jsonErr.error) {
             errMsg += `\nChi tiết lỗi: ${jsonErr.error}`;
           }
         } catch (e) {
-          try {
-            const rawTxt = await res.text();
-            if (rawTxt) errMsg += `\nChi tiết phản hồi: ${rawTxt.substring(0, 150)}`;
-          } catch (e2) {}
+          if (responseText) {
+            errMsg += `\nChi tiết phản hồi: ${responseText.substring(0, 200)}`;
+          }
         }
         throw new Error(
           `${errMsg}\n\n💡 Mẹo xử lý trên Vercel:\nHãy tạo thêm biến môi trường là "VITE_GEMINI_API_KEY" bằng chính Gemini API Key của bạn trong Vercel Project Dashboard và tiến hành Redeploy để kích hoạt tính năng tra cứu tự động.`
         );
       }
 
-      const info = await res.json();
+      const info = JSON.parse(responseText);
       
       if (info.taxId || info.address) {
         onChange({
