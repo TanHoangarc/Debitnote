@@ -281,8 +281,11 @@ app.delete("/api/customers/:id", async (req, res) => {
   }
 });
 
-app.get("/api/masothue/:taxId", async (req, res) => {
-  const { taxId } = req.params;
+app.post("/api/search-company", express.json(), async (req, res) => {
+  const { query } = req.body;
+  if (!query) {
+    return res.status(400).json({ error: "Missing query" });
+  }
   try {
     const apiKey = process.env.GEMINI_API_KEY;
     if (!apiKey) {
@@ -291,23 +294,25 @@ app.get("/api/masothue/:taxId", async (req, res) => {
       });
     }
     const aiClient = getGeminiClient();
-    const prompt = `Tra cứu mã số thuế doanh nghiệp "${taxId}" tại Việt Nam thông qua Google Search. Hãy tìm Tên công ty đầy đủ bằng tiếng Việt (ưu tiên tên tiếng Việt chính thức, nếu không có thì lấy tên tiếng Anh) và Địa chỉ công ty khớp với mã số thuế này trên các trang tra cứu doanh nghiệp (ví dụ masothue.com). Trả về đúng định dạng JSON: {"name": "Tên công ty", "address": "Địa chỉ", "taxId": "${taxId}"}. Chỉ trả về duy nhất chuỗi JSON, không có code block hay nội dung thừa.`;
+    const prompt = `Tra cứu thông tin doanh nghiệp "${query}" tại Việt Nam thông qua Google Search (ưu tiên các trang như masothue.com). Hãy tìm Tên công ty đầy đủ bằng tiếng Việt (tên chính thức), Mã số thuế, và Địa chỉ công ty. Trả về đúng định dạng JSON: {"name": "Tên công ty tiếng Việt", "address": "Địa chỉ", "taxId": "Mã số thuế"}. Chỉ trả về duy nhất chuỗi JSON, không có code block hay nội dung thừa.`;
     
     // Utilize gemini with googleSearch tool to fetch real-time public data
     const response = await aiClient.models.generateContent({
       model: "gemini-2.5-flash",
       contents: prompt,
       config: {
-        tools: [{ googleSearch: {} }],
-        responseMimeType: "application/json"
+        tools: [{ googleSearch: {} }]
       }
     });
     
-    const textInfo = response.text || "{}";
+    let textInfo = response.text || "{}";
+    if (textInfo.includes('```json')) {
+      textInfo = textInfo.replace(/```json\n?/g, '').replace(/```/g, '');
+    }
     const data = JSON.parse(textInfo);
     res.json(data);
   } catch (error: any) {
-    console.error("Error fetching tax info:", error);
+    console.error("Error fetching company info:", error);
     res.status(500).json({ error: error.message });
   }
 });
