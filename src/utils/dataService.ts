@@ -389,6 +389,7 @@ interface ExtractParams {
 
 export async function extractDocumentData(params: ExtractParams): Promise<any> {
   const hasBackend = await checkBackendAvailability();
+  let backendError: string | null = null;
 
   if (hasBackend) {
     try {
@@ -406,6 +407,7 @@ export async function extractDocumentData(params: ExtractParams): Promise<any> {
     } catch (e: any) {
       console.warn("Express /api/extract failed. Running client-side browser Gemini fallback...", e);
       // Fallback to client-side extraction since server had error
+      backendError = e.message || "Lỗi backend cục bộ";
     }
   }
 
@@ -413,7 +415,10 @@ export async function extractDocumentData(params: ExtractParams): Promise<any> {
   const apiKey = (import.meta as any).env?.VITE_GEMINI_API_KEY || "";
   if (!apiKey) {
     throw new Error(
-      "Không tìm thấy khóa VITE_GEMINI_API_KEY ở môi trường trình duyệt. Vui lòng thiết lập biến môi trường VITE_GEMINI_API_KEY trong Dashboard của Vercel (mục Environment Variables) để thực hiện trích xuất dữ liệu trực tiếp trên Vercel."
+      `Lỗi từ Server: ${backendError ? backendError : "(Không có phản hồi)"}\n\n` + 
+      "Gợi ý sửa lỗi trên Vercel: Có thể do file quá lớn (Vercel giới hạn 4.5MB) hoặc server timeout. " +
+      "Để trích xuất trực tiếp trên trình duyệt (không bị kẹt bởi giới hạn của Vercel), " +
+      "vui lòng đổi tên hoặc thêm biến môi trường VITE_GEMINI_API_KEY trong Dashboard của Vercel bằng chính key của bạn, sau đó Redeploy lại."
     );
   }
 
@@ -433,7 +438,7 @@ export async function extractDocumentData(params: ExtractParams): Promise<any> {
   }
 
   // Same strategy fallback models as the backend server did
-  const models = ["gemini-3.5-flash", "gemini-2.5-flash", "gemini-flash-latest"];
+  const models = ["gemini-2.5-flash", "gemini-1.5-flash"];
   let lastError: any = null;
 
   for (const model of models) {

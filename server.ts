@@ -477,9 +477,9 @@ app.post("/api/extract", async (req, res) => {
     };
 
     async function generateJsonWithFallback(contents: any) {
-      // Prioritize gemini-3.5-flash with low thinking level for fast, sub-2s response times, and fallback to gemini-flash-latest
+      // Prioritize gemini-2.5-flash for maximum speed (often < 5s) to bypass Vercel's 10s limit
       const isVercel = !!process.env.VERCEL;
-      const models = ["gemini-3.5-flash", "gemini-flash-latest"];
+      const models = ["gemini-2.5-flash", "gemini-1.5-flash"];
       const maxAttempts = isVercel ? 1 : 2;
       let lastError: any = null;
 
@@ -493,7 +493,6 @@ app.post("/api/extract", async (req, res) => {
               config: {
                 responseMimeType: "application/json",
                 responseSchema: debitNoteSchema,
-                ...(model === "gemini-3.5-flash" ? { thinkingConfig: { thinkingLevel: "LOW" as any } } : {})
               }
             });
             if (res && res.text) {

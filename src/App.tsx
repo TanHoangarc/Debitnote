@@ -5,6 +5,7 @@ import DebitNotePreview from "./components/DebitNotePreview";
 import HistorySidebar from "./components/HistorySidebar";
 import MasterDataTab from "./components/MasterDataTab";
 import { Upload, FileText, Database, Layers, Sparkles, RefreshCw, Printer, AlertTriangle, CheckSquare, X } from "lucide-react";
+import { extractDocumentData } from "./utils/dataService";
 
 const parseVolume = (volumeStr: string): { qty?: number; unit: string } => {
   const clean = (volumeStr || "").trim().toUpperCase();
@@ -226,42 +227,14 @@ export default function App() {
         base64Content = await fileLoadedPromise;
       }
 
-      // Call extraction endpoint
-      const response = await fetch("/api/extract", {
-        method: "POST",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({
-          fileBase64: base64Content,
-          mimeType: file.type || "application/octet-stream",
-          fileName: file.name,
-        }),
+      // Sử dụng dataService xử lý trích xuất (có fallback phía Trình duyệt để tránh lỗi Vercel)
+      const extracted = await extractDocumentData({
+        fileBase64: base64Content,
+        mimeType: file.type || "application/octet-stream",
+        fileName: file.name,
       });
 
       clearInterval(interval);
-
-      if (!response.ok) {
-        let errMsg = "Không thể phân tích chứng từ.";
-        try {
-          const errText = await response.text();
-          try {
-            const errJson = JSON.parse(errText);
-            errMsg = errJson.error || errMsg;
-          } catch {
-            errMsg = errText || errMsg;
-          }
-        } catch {
-          errMsg = `HTTP error ${response.status}: ${response.statusText}`;
-        }
-        throw new Error(errMsg);
-      }
-
-      const contentType = response.headers.get("content-type") || "";
-      if (!contentType.includes("application/json")) {
-        const text = await response.text();
-        throw new Error(text || "Máy chủ phản hồi không đúng định dạng JSON.");
-      }
-
-      const extracted = await response.json();
 
       // Formulate unique IDs for extracted charges
       const parsedCharges: ChargeItem[] = (extracted.charges || []).map((charge: any) => ({
