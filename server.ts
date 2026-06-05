@@ -150,9 +150,9 @@ const defaultCustomers = [
 // Initialize Gemini Client Lazily
 let aiClientInstance: GoogleGenAI | null = null;
 function getGeminiClient(): GoogleGenAI {
-  const apiKey = process.env.GEMINI_API_KEY;
+  const apiKey = process.env.GEMINI_API_KEY || process.env.VITE_GEMINI_API_KEY;
   if (!apiKey) {
-    throw new Error("GEMINI_API_KEY is not configured on the server.");
+    throw new Error("GEMINI_API_KEY or VITE_GEMINI_API_KEY is not configured on the server.");
   }
   if (!aiClientInstance) {
     aiClientInstance = new GoogleGenAI({
@@ -420,10 +420,10 @@ app.post("/api/search-company", express.json(), async (req, res) => {
 
     // 2. Fallback to standard Gemini text generation WITHOUT search grounding tools (zero search quota / zero 429 risk)
     if (!scraperSuccess) {
-      const apiKey = process.env.GEMINI_API_KEY;
+      const apiKey = process.env.GEMINI_API_KEY || process.env.VITE_GEMINI_API_KEY;
       if (!apiKey) {
         return res.status(500).json({
-          error: "GEMINI_API_KEY is not configured.",
+          error: "GEMINI_API_KEY or VITE_GEMINI_API_KEY is not configured on the server. Please check your Vercel Environment Variables.",
         });
       }
 
@@ -541,10 +541,10 @@ app.post("/api/extract", async (req, res) => {
       return res.status(400).json({ error: "Missing fileBase64 or mimeType" });
     }
 
-    const apiKey = process.env.GEMINI_API_KEY;
+    const apiKey = process.env.GEMINI_API_KEY || process.env.VITE_GEMINI_API_KEY;
     if (!apiKey) {
       return res.status(500).json({
-        error: "GEMINI_API_KEY is not configured on the server. Please check your Vercel Environment Variables.",
+        error: "GEMINI_API_KEY or VITE_GEMINI_API_KEY is not configured on the server. Please check your Vercel Environment Variables.",
       });
     }
 

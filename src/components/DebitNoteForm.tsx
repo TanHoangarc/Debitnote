@@ -409,7 +409,7 @@ export default function DebitNoteForm({
           } catch (e2) {}
         }
         throw new Error(
-          `${errMsg}\n\n💡 Mẹo xử lý trên Vercel:\nNếu bạn đã đưa ứng dụng lên Vercel, hãy đảm bảo bạn đã tạo biến môi trường "GEMINI_API_KEY" trong Vercel Project Dashboard và tiến hành Redeploy hoặc kiểm tra quyền kết nối mạng.`
+          `${errMsg}\n\n💡 Mẹo xử lý trên Vercel:\nHãy tạo thêm biến môi trường là "VITE_GEMINI_API_KEY" bằng chính Gemini API Key của bạn trong Vercel Project Dashboard và tiến hành Redeploy để kích hoạt tính năng tra cứu tự động.`
         );
       }
 
