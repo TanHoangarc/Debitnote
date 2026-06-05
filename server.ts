@@ -281,6 +281,37 @@ app.delete("/api/customers/:id", async (req, res) => {
   }
 });
 
+app.get("/api/masothue/:taxId", async (req, res) => {
+  const { taxId } = req.params;
+  try {
+    const apiKey = process.env.GEMINI_API_KEY;
+    if (!apiKey) {
+      return res.status(500).json({
+        error: "GEMINI_API_KEY is not configured.",
+      });
+    }
+    const aiClient = getGeminiClient();
+    const prompt = `Tra cứu mã số thuế doanh nghiệp "${taxId}" tại Việt Nam thông qua Google Search. Hãy tìm Tên công ty đầy đủ bằng tiếng Việt (ưu tiên tên tiếng Việt chính thức, nếu không có thì lấy tên tiếng Anh) và Địa chỉ công ty khớp với mã số thuế này trên các trang tra cứu doanh nghiệp (ví dụ masothue.com). Trả về đúng định dạng JSON: {"name": "Tên công ty", "address": "Địa chỉ", "taxId": "${taxId}"}. Chỉ trả về duy nhất chuỗi JSON, không có code block hay nội dung thừa.`;
+    
+    // Utilize gemini with googleSearch tool to fetch real-time public data
+    const response = await aiClient.models.generateContent({
+      model: "gemini-2.5-flash",
+      contents: prompt,
+      config: {
+        tools: [{ googleSearch: {} }],
+        responseMimeType: "application/json"
+      }
+    });
+    
+    const textInfo = response.text || "{}";
+    const data = JSON.parse(textInfo);
+    res.json(data);
+  } catch (error: any) {
+    console.error("Error fetching tax info:", error);
+    res.status(500).json({ error: error.message });
+  }
+});
+
 // 3. Debit History Endpoints
 app.get("/api/history", async (req, res) => {
   try {

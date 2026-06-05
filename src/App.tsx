@@ -546,6 +546,7 @@ export default function App() {
                   masterCustomers={customers}
                   masterFees={fees}
                   onAddFee={handleAddMasterFee}
+                  onAddCustomer={handleAddMasterCustomer}
                   onSave={handleSaveDebitHistory}
                   onReset={() => {
                     if (confirm("Xóa trắng tất cả dữ liệu đang soạn thảo để nhập biểu mẫu mới?")) {

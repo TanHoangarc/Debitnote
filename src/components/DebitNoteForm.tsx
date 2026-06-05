@@ -8,6 +8,7 @@ interface DebitNoteFormProps {
   masterCustomers: Customer[];
   masterFees: Fee[];
   onAddFee?: (fee: Fee) => void;
+  onAddCustomer?: (customer: Customer) => void;
   onSave: () => void;
   onReset: () => void;
   isSaving: boolean;
@@ -20,6 +21,7 @@ export default function DebitNoteForm({
   masterCustomers,
   masterFees,
   onAddFee,
+  onAddCustomer,
   onSave,
   onReset,
   isSaving,
@@ -27,6 +29,7 @@ export default function DebitNoteForm({
 }: DebitNoteFormProps) {
   // Local active inputs for adding custom charges
   const [selectedCustomerIndex, setSelectedCustomerIndex] = useState<string>("");
+  const [isSearchingTax, setIsSearchingTax] = useState(false);
 
   // Quick Add Fee State
   const [showQuickAddFee, setShowQuickAddFee] = useState(false);
@@ -332,9 +335,14 @@ export default function DebitNoteForm({
     });
   };
 
-  // Sort charges: 0% VAT first, then 8%, then 10%
+  // Sort charges: 0% VAT first, then 8%, then 10%, service fees (Chi hộ = false) before Chi hộ
   const handleAutoSortCharges = () => {
     const sorted = [...data.charges].sort((a, b) => {
+      // 1. Phí dịch vụ (isPayOnBehalf == false) comes before Chi hộ (isPayOnBehalf == true)
+      if (a.isPayOnBehalf !== b.isPayOnBehalf) {
+        return a.isPayOnBehalf ? 1 : -1;
+      }
+      // 2. Sort by VAT (0, 8, 10...)
       const vatA = Number(a.vatPercent) || 0;
       const vatB = Number(b.vatPercent) || 0;
       return vatA - vatB;
@@ -343,6 +351,50 @@ export default function DebitNoteForm({
       ...data,
       charges: sorted,
     });
+  };
+
+  const handleSearchTaxCode = async () => {
+    if (!data.taxId) {
+      alert("Vui lòng nhập Mã số thuế trước khi tra cứu.");
+      return;
+    }
+    setIsSearchingTax(true);
+    try {
+      const res = await fetch(`/api/masothue/${data.taxId}`);
+      if (!res.ok) throw new Error("Thất bại khi liên hệ máy chủ tra cứu.");
+      const info = await res.json();
+      
+      if (info.name || info.address) {
+        onChange({
+          ...data,
+          companyName: info.name || data.companyName,
+          address: info.address || data.address
+        });
+        alert(`Đã tìm thấy thông tin công ty: \n${info.name}\n${info.address}`);
+      } else {
+         alert("Không tìm thấy thông tin trên mạng hoặc mã số thuế chưa đúng.");
+      }
+    } catch (e: any) {
+      alert("Tra cứu thất bại: " + e.message);
+    } finally {
+      setIsSearchingTax(false);
+    }
+  };
+
+  const handleSaveCustomerToMaster = () => {
+    if (!data.companyName || !data.taxId) {
+      alert("Vui lòng điền tối thiểu Tên công ty và Mã số thuế để lưu!");
+      return;
+    }
+    if (onAddCustomer) {
+      onAddCustomer({
+        id: "",
+        name: data.companyName,
+        taxId: data.taxId,
+        address: data.address,
+      });
+      alert(`Đã lưu "${data.companyName}" vào danh sách Khách hàng.`);
+    }
   };
 
   return (
@@ -375,7 +427,12 @@ export default function DebitNoteForm({
 
         <div className="grid grid-cols-1 md:grid-cols-12 gap-4">
           <div className="md:col-span-8">
-            <label className="block text-xs font-bold text-slate-600 mb-1">TÊN CÔNG TY (CUSTOMER)</label>
+            <label className="block text-xs font-bold text-slate-600 mb-1 flex justify-between items-center">
+              <span>TÊN CÔNG TY (CUSTOMER)</span>
+              <button type="button" onClick={handleSaveCustomerToMaster} className="text-[10px] text-emerald-600 font-bold hover:underline cursor-pointer flex items-center gap-1">
+                Lưu danh sách
+              </button>
+            </label>
             <input
               type="text"
               value={data.companyName}
@@ -386,14 +443,28 @@ export default function DebitNoteForm({
           </div>
 
           <div className="md:col-span-4">
-            <label className="block text-xs font-bold text-slate-600 mb-1">MÃ SỐ THUẾ (MST)</label>
-            <input
-              type="text"
-              value={data.taxId}
-              onChange={(e) => handleFieldChange("taxId", e.target.value)}
-              className="w-full bg-white border border-slate-300 rounded-md p-2 text-sm text-slate-800 font-mono tracking-wider focus:ring-2 focus:ring-emerald-500"
-              placeholder="Nhập MST..."
-            />
+            <label className="block text-xs font-bold text-slate-600 mb-1 flex justify-between">
+              <span>MÃ SỐ THUẾ (MST)</span>
+            </label>
+            <div className="flex gap-1">
+              <input
+                type="text"
+                value={data.taxId}
+                onChange={(e) => handleFieldChange("taxId", e.target.value)}
+                className="flex-1 min-w-0 bg-white border border-slate-300 rounded-md p-2 text-sm text-slate-800 font-mono tracking-wider focus:ring-2 focus:ring-emerald-500"
+                placeholder="Nhập MST..."
+              />
+              <button
+                type="button"
+                onClick={handleSearchTaxCode}
+                disabled={isSearchingTax}
+                className="bg-emerald-100 text-emerald-700 px-3 rounded-md text-xs font-bold flex items-center gap-1 hover:bg-emerald-200 disabled:opacity-50 transition cursor-pointer"
+                title="Google Search Tra cứu Tên & Địa chỉ tự động qua MST"
+              >
+                {isSearchingTax ? <RefreshCw size={12} className="animate-spin" /> : <Sparkles size={12} />}
+                Tra cứu
+              </button>
+            </div>
           </div>
 
           <div className="md:col-span-12">
