@@ -87,7 +87,10 @@ export default function DebitNotePreview({ data }: DebitNotePreviewProps) {
   };
 
   const handlePrint = () => {
+    const originalTitle = document.title;
+    document.title = `DEBIT NOTE BL ${data.hblMbl || ""}`.trim();
     window.print();
+    document.title = originalTitle;
   };
 
   return (
