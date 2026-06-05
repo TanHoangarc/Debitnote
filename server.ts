@@ -6,7 +6,7 @@ import { GoogleGenAI, Type } from "@google/genai";
 import mammoth from "mammoth";
 import dotenv from "dotenv";
 import { initializeApp, getApps, getApp } from "firebase/app";
-import { getFirestore, doc, getDocs, setDoc, deleteDoc, collection } from "firebase/firestore";
+import { getFirestore, doc, getDocs, setDoc, deleteDoc, collection } from "firebase/firestore/lite";
 import { firebaseConfigStatic } from "./firebase-config";
 
 // Load environment variables
