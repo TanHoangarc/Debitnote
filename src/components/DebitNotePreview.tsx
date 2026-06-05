@@ -163,7 +163,7 @@ export default function DebitNotePreview({ data }: DebitNotePreviewProps) {
             {/* Shipments Metadata Grid */}
             <div className="grid grid-cols-12 gap-0 mb-4 border border-slate-300">
               {/* Left Column Fields */}
-              <div className="col-span-12 md:col-span-7 border-r border-slate-300 grid grid-cols-3 divide-y divide-slate-200">
+              <div className="col-span-7 border-r border-slate-300 grid grid-cols-3 divide-y divide-slate-200">
                 <div className="col-span-1 p-1.5 font-semibold text-slate-600 bg-slate-50">Carrier/Agent</div>
                 <div className="col-span-2 p-1.5 font-medium border-l border-slate-200">{data.carrierAgent || "-"}</div>
 
@@ -191,7 +191,7 @@ export default function DebitNotePreview({ data }: DebitNotePreviewProps) {
               </div>
 
               {/* Right Column Fields */}
-              <div className="col-span-12 md:col-span-5 grid grid-cols-3 divide-y divide-slate-200">
+              <div className="col-span-5 grid grid-cols-3 divide-y divide-slate-200">
                 <div className="col-span-1 p-1.5 font-semibold text-slate-600 bg-slate-50">ETD/ETA</div>
                 <div className="col-span-2 p-1.5 font-medium border-l border-slate-200">
                   {data.etdEta || "-"}
@@ -324,8 +324,8 @@ export default function DebitNotePreview({ data }: DebitNotePreviewProps) {
 
           {/* Footer Section: Bank Details */}
           <div className="mt-6 pt-4 border-t border-slate-200">
-            <div className="grid grid-cols-12 gap-3 text-[10px] text-slate-600 leading-relaxed md:divide-x divide-slate-100">
-              <div className="col-span-12 md:col-span-8">
+            <div className="grid grid-cols-12 gap-3 text-[10px] text-slate-600 leading-relaxed divide-x divide-slate-100">
+              <div className="col-span-8">
                 <h4 className="font-bold text-[#0a4d92] tracking-tight mb-1 uppercase text-[10px]">BANK DETAILS:</h4>
                 <div className="space-y-0.5 font-sans">
                   <p>
@@ -340,7 +340,7 @@ export default function DebitNotePreview({ data }: DebitNotePreviewProps) {
                 </div>
               </div>
 
-              <div className="col-span-12 md:col-span-4 pl-0 md:pl-4 flex flex-col justify-end items-center text-center">
+              <div className="col-span-4 pl-4 flex flex-col justify-end items-center text-center">
                 <div className="border-b border-slate-200 w-full mb-8"></div>
                 <p className="font-bold text-[#0a4d92] uppercase text-[9px] tracking-wider">Authorized Signature</p>
                 <p className="text-[8px] text-slate-400 mt-0.5">Please check and settle within 7 days.</p>
