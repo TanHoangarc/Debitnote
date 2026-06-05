@@ -324,7 +324,7 @@ const promptText = `
     1. 'description': Extract or map to clean standard description uppercase (e.g. CUỐC BIỂN, THC, PHÍ BILL, PHÍ SEAL, PHÍ TELEX, KHAI HẢI QUAN, KÉO CONT, PHÍ NÂNG, PHÍ HẠ, CƠ SỞ HẠ TẦNG, etc.)
     2. 'qty': Quantity/Unit number (default to 1.00 if unspecified or FCL)
     3. 'price': Price/Unit price of this charge
-    4. 'vatPercent': Extract the VAT percentage explicitly (e.g. 0, 8, 10). If not listed:
+    4. 'vatPercent': Extract the VAT percentage explicitly (Only 0, 8, or 10 are valid). If not listed:
        - Local handling fees like THC, BILL, SEAL, TELEX, CUSTOMS CLEARANCE, TRUCKING, LIFT ON/OFF normally have an 8% or 10% VAT in Vietnam.
        - Ocean freight (CUỐC BIỂN) normally has 0% VAT.
     5. 'currency': VND or USD

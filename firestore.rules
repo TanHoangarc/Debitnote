@@ -22,46 +22,24 @@ service cloud.firestore {
 
     // --- CUSTOMER VALIDATION BLUEPRINT ---
     function isValidCustomer(data) {
-      return data.keys().hasAll(['id', 'name', 'taxId', 'address'])
-        && data.keys().size() == 4
-        && data.id is string && data.id.size() <= 128
-        && data.name is string && data.name.size() > 0 && data.name.size() <= 250
-        && data.taxId is string && data.taxId.size() > 0 && data.taxId.size() <= 100
-        && data.address is string && data.address.size() > 0 && data.address.size() <= 500;
+      return data.id is string
+        && data.name is string
+        && data.taxId is string
+        && data.address is string;
     }
 
     // --- FEE VALIDATION BLUEPRINT ---
     function isValidFee(data) {
-      return data.keys().hasAll(['id', 'description', 'vatPercent', 'isPayOnBehalf'])
-        && data.keys().size() == 4
-        && data.id is string && data.id.size() <= 128
-        && data.description is string && data.description.size() > 0 && data.description.size() <= 150
+      return data.id is string
+        && data.description is string
         && (data.vatPercent is int || data.vatPercent is float)
         && data.isPayOnBehalf is bool;
     }
 
     // --- DEBIT NOTE VALIDATION BLUEPRINT ---
     function isValidDebitNote(data) {
-      return data.keys().hasAll([
-        'id', 'companyName', 'taxId', 'address', 'jobNo',
-        'carrierAgent', 'etdEta', 'hblMbl', 'pol', 'pod',
-        'volume', 'roe', 'note', 'charges', 'createdAt'
-      ])
-        && data.id is string && data.id.size() <= 128
-        && data.companyName is string && data.companyName.size() <= 250
-        && data.taxId is string && data.taxId.size() <= 100
-        && data.address is string && data.address.size() <= 500
-        && data.jobNo is string && data.jobNo.size() <= 100
-        && data.carrierAgent is string && data.carrierAgent.size() <= 100
-        && data.etdEta is string && data.etdEta.size() <= 100
-        && data.hblMbl is string && data.hblMbl.size() <= 100
-        && data.pol is string && data.pol.size() <= 100
-        && data.pod is string && data.pod.size() <= 100
-        && data.volume is string && data.volume.size() <= 100
-        && (data.roe is int || data.roe is float)
-        && data.note is string && data.note.size() <= 4000
-        && data.charges is list
-        && data.createdAt is string && data.createdAt.size() <= 100;
+      return data.id is string
+        && data.companyName is string;
     }
 
     // --- SECURE MATCH BLOCKS ---

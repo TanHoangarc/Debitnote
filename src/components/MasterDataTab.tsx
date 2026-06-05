@@ -261,7 +261,6 @@ export default function MasterDataTab({
               className="w-full bg-white border border-slate-300 rounded p-1.5 text-xs text-slate-800 focus:outline-none focus:ring-1 focus:ring-emerald-500"
             >
               <option value={0}>0 %</option>
-              <option value={4}>4 %</option>
               <option value={8}>8 %</option>
               <option value={10}>10 %</option>
             </select>
@@ -344,7 +343,6 @@ export default function MasterDataTab({
                               className="w-full bg-white border border-slate-300 rounded p-1 text-xs text-slate-800 font-bold select-none cursor-pointer"
                             >
                               <option value={0}>0 %</option>
-                              <option value={4}>4 %</option>
                               <option value={8}>8 %</option>
                               <option value={10}>10 %</option>
                             </select>
