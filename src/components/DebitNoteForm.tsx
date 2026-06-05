@@ -353,31 +353,26 @@ export default function DebitNoteForm({
     });
   };
 
-  const handleSearchCompanyDetails = async () => {
-    if (!data.companyName) {
-      alert("Vui lòng nhập Tên công ty trước khi tra cứu.");
+  const handleSearchTaxCode = async () => {
+    if (!data.taxId) {
+      alert("Vui lòng nhập Mã số thuế trước khi tra cứu.");
       return;
     }
     setIsSearchingTax(true);
     try {
-      const res = await fetch(`/api/search-company`, {
-        method: "POST",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ query: data.companyName })
-      });
+      const res = await fetch(`/api/masothue/${data.taxId}`);
       if (!res.ok) throw new Error("Thất bại khi liên hệ máy chủ tra cứu.");
       const info = await res.json();
       
-      if (info.taxId || info.address) {
+      if (info.name || info.address) {
         onChange({
           ...data,
           companyName: info.name || data.companyName,
-          taxId: info.taxId || data.taxId,
           address: info.address || data.address
         });
-        alert(`Đã tìm thấy thông tin công ty: \n${info.name || "-"}\nMST: ${info.taxId || "-"}\nĐịa chỉ: ${info.address || "-"}`);
+        alert(`Đã tìm thấy thông tin công ty: \n${info.name}\n${info.address}`);
       } else {
-         alert("Không tìm thấy thông tin trên mạng, hãy kiểm tra lại tên công ty.");
+         alert("Không tìm thấy thông tin trên mạng hoặc mã số thuế chưa đúng.");
       }
     } catch (e: any) {
       alert("Tra cứu thất bại: " + e.message);
@@ -461,10 +456,10 @@ export default function DebitNoteForm({
               />
               <button
                 type="button"
-                onClick={handleSearchCompanyDetails}
+                onClick={handleSearchTaxCode}
                 disabled={isSearchingTax}
                 className="bg-emerald-100 text-emerald-700 px-3 rounded-md text-xs font-bold flex items-center gap-1 hover:bg-emerald-200 disabled:opacity-50 transition cursor-pointer"
-                title="Google Search Tra cứu MST & Địa chỉ tự động qua Tên công ty"
+                title="Google Search Tra cứu Tên & Địa chỉ tự động qua MST"
               >
                 {isSearchingTax ? <RefreshCw size={12} className="animate-spin" /> : <Sparkles size={12} />}
                 Tra cứu
