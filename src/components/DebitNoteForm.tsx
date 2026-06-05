@@ -354,39 +354,10 @@ export default function DebitNoteForm({
   };
 
   const handleSearchCompanyDetails = async () => {
-    // 1. Nếu có MST và người dùng muốn tra cứu ngược hoặc điền MST trước: 
-    //    Gọi thẳng tới VietQR API từ trình duyệt (CORS-friendly, miễn phí, không cần key, 100% ổn định trên Vercel!)
-    if (data.taxId && data.taxId.trim() !== "") {
-      setIsSearchingTax(true);
-      try {
-        const cleanTaxId = data.taxId.trim().replace(/\s+/g, "");
-        const res = await fetch(`https://api.vietqr.io/v2/business/${cleanTaxId}`);
-        if (res.ok) {
-          const result = await res.json();
-          if (result && result.data) {
-            onChange({
-              ...data,
-              companyName: result.data.name || data.companyName,
-              address: result.data.address || data.address,
-              taxId: result.data.taxCode || data.taxId
-            });
-            alert(`[VietQR API] Tìm thấy thông tin doanh nghiệp theo MST thành công:\n\n- Tên công ty: ${result.data.name}\n- Địa chỉ: ${result.data.address}`);
-            setIsSearchingTax(false);
-            return;
-          }
-        }
-      } catch (e: any) {
-        console.warn("VietQR API Client-side lookup failed, failing back to server search...", e.message || e);
-      }
-    }
-
-    // 2. Tra cứu dựa trên Tên công ty (gửi request lên server để tìm kiếm qua DuckDuckGo / Gemini)
     if (!data.companyName) {
-      alert("Vui lòng nhập Tên công ty (hoặc Mã số thuế) trước khi tra cứu.");
-      setIsSearchingTax(false);
+      alert("Vui lòng nhập Tên công ty trước khi tra cứu.");
       return;
     }
-
     setIsSearchingTax(true);
     try {
       const res = await fetch(`/api/search-company`, {
@@ -394,27 +365,8 @@ export default function DebitNoteForm({
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({ query: data.companyName })
       });
-      
-      const responseText = await res.text();
-      
-      if (!res.ok) {
-        let errMsg = `Cổng máy chủ Vercel trả về lỗi HTTP ${res.status}`;
-        try {
-          const jsonErr = JSON.parse(responseText);
-          if (jsonErr && jsonErr.error) {
-            errMsg += `\nChi tiết lỗi: ${jsonErr.error}`;
-          }
-        } catch (e) {
-          if (responseText) {
-            errMsg += `\nChi tiết phản hồi: ${responseText.substring(0, 200)}`;
-          }
-        }
-        throw new Error(
-          `${errMsg}\n\n💡 Mẹo xử lý trên Vercel:\nHãy tạo thêm biến môi trường là "VITE_GEMINI_API_KEY" bằng chính Gemini API Key của bạn trong Vercel Project Dashboard và tiến hành Redeploy để kích hoạt tính năng tra cứu tự động.`
-        );
-      }
-
-      const info = JSON.parse(responseText);
+      if (!res.ok) throw new Error("Thất bại khi liên hệ máy chủ tra cứu.");
+      const info = await res.json();
       
       if (info.taxId || info.address) {
         onChange({
@@ -423,12 +375,12 @@ export default function DebitNoteForm({
           taxId: info.taxId || data.taxId,
           address: info.address || data.address
         });
-        alert(`Đã tìm thấy thông tin công ty:\n\n- Tên công ty: ${info.name || "-"}\n- MST: ${info.taxId || "-"}\n- Địa chỉ: ${info.address || "-"}`);
+        alert(`Đã tìm thấy thông tin công ty: \n${info.name || "-"}\nMST: ${info.taxId || "-"}\nĐịa chỉ: ${info.address || "-"}`);
       } else {
-         alert("Không tìm thấy thông tin trên mạng, hãy bổ sung thêm các từ khóa hoặc kiểm tra lại tên công ty.");
+         alert("Không tìm thấy thông tin trên mạng, hãy kiểm tra lại tên công ty.");
       }
     } catch (e: any) {
-      alert("Tra cứu thất bại:\n" + e.message);
+      alert("Tra cứu thất bại: " + e.message);
     } finally {
       setIsSearchingTax(false);
     }

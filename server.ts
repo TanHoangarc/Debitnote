@@ -35,20 +35,9 @@ try {
 const app = express();
 const PORT = 3000;
 
-// Set up larger limit for base64 file uploads with Vercel safe checks
-app.use((req, res, next) => {
-  if (req.body && typeof req.body === "object" && Object.keys(req.body).length > 0) {
-    return next();
-  }
-  express.json({ limit: "50mb" })(req, res, next);
-});
-
-app.use((req, res, next) => {
-  if (req.body && typeof req.body === "object" && Object.keys(req.body).length > 0) {
-    return next();
-  }
-  express.urlencoded({ limit: "50mb", extended: true })(req, res, next);
-});
+// Set up larger limit for base64 file uploads
+app.use(express.json({ limit: "50mb" }));
+app.use(express.urlencoded({ limit: "50mb", extended: true }));
 
 // Initialize Firebase SDK with a failsafe static config fallback
 let firebaseConfig = firebaseConfigStatic;
@@ -71,28 +60,8 @@ if (fs.existsSync(firebaseConfigPath)) {
   console.log("Firebase config file not found, utilizing bundled static configuration fallback.");
 }
 
-let firebaseApp: any = null;
-let db: any = null;
-
-try {
-  firebaseApp = getApps().length === 0 ? initializeApp(firebaseConfig) : getApp();
-  db = getFirestore(firebaseApp, firebaseConfig.firestoreDatabaseId);
-} catch (fbErr: any) {
-  console.warn("Failsafe Firebase Instantiation Warning: Could not initialize database.", fbErr.message || fbErr);
-}
-
-// Ensure database endpoints fail gracefully instead of throwing type errors if Firebase is offline
-app.use((req, res, next) => {
-  const isDbRoute = req.path.startsWith("/api/fees") || 
-                    req.path.startsWith("/api/customers") || 
-                    req.path.startsWith("/api/history");
-  if (isDbRoute && !db) {
-    return res.status(503).json({ 
-      error: "Mục cơ sở dữ liệu Firebase chưa được kết nối hoặc cấu hình đúng ở nền tảng Vercel. Vui lòng sử dụng tính năng lưu trữ Offline (LocalStorage) hiện tại để tiếp tục!" 
-    });
-  }
-  next();
-});
+const firebaseApp = getApps().length === 0 ? initializeApp(firebaseConfig) : getApp();
+const db = getFirestore(firebaseApp, firebaseConfig.firestoreDatabaseId);
 
 // --- FIREBASE ERROR HANDLING SUPPORT ---
 enum OperationType {
@@ -158,31 +127,12 @@ const defaultCustomers = [
   }
 ];
 
-// Helper to safely parse JSON from Gemini text outputs, handling markdown formatting or leading text
-function parseSafeJson(text: string): any {
-  if (!text) return {};
-  const clean = text.trim();
-  try {
-    return JSON.parse(clean);
-  } catch (e) {
-    // Attempt block search
-    try {
-      const match = clean.match(/\{[\s\S]*\}/);
-      if (match) {
-        return JSON.parse(match[0]);
-      }
-    } catch (e2) {}
-    console.error("Failed to parse JSON result from Gemini:", clean);
-    throw e;
-  }
-}
-
 // Initialize Gemini Client Lazily
 let aiClientInstance: GoogleGenAI | null = null;
 function getGeminiClient(): GoogleGenAI {
-  const apiKey = process.env.GEMINI_API_KEY || process.env.VITE_GEMINI_API_KEY;
+  const apiKey = process.env.GEMINI_API_KEY;
   if (!apiKey) {
-    throw new Error("GEMINI_API_KEY or VITE_GEMINI_API_KEY is not configured on the server.");
+    throw new Error("GEMINI_API_KEY is not configured on the server.");
   }
   if (!aiClientInstance) {
     aiClientInstance = new GoogleGenAI({
@@ -331,151 +281,38 @@ app.delete("/api/customers/:id", async (req, res) => {
   }
 });
 
-app.post("/api/search-company", async (req, res) => {
+app.post("/api/search-company", express.json(), async (req, res) => {
   const { query } = req.body;
   if (!query) {
     return res.status(400).json({ error: "Missing query" });
   }
-
   try {
-    let responseData = { name: "", address: "", taxId: "" };
-    let scraperSuccess = false;
-
-    // 1. Try DuckDuckGo Scraper on masothue.com to avoid Gemini Search Grounding rate-limiting quotas
-    try {
-      console.log("Starting web crawler search for: " + query);
-      const ddgUrl = "https://html.duckduckgo.com/html/?q=site:masothue.com+" + encodeURIComponent(query);
-      const ddgRes = await fetch(ddgUrl, {
-        headers: {
-          "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36",
-          "Accept": "text/html,application/xhtml+xml,application/xml;q=0.9,*/*;q=0.8"
-        }
+    const apiKey = process.env.GEMINI_API_KEY;
+    if (!apiKey) {
+      return res.status(500).json({
+        error: "GEMINI_API_KEY is not configured.",
       });
-
-      if (ddgRes.ok) {
-        const ddgHtml = await ddgRes.text();
-        const urlRegex = /uddg=(https%3A%2F%2Fmasothue\.com%2F[a-zA-Z0-9%\-_]+)/gi;
-        let match;
-        let matchedCompanyUrl = "";
-
-        while ((match = urlRegex.exec(ddgHtml)) !== null) {
-          const decoded = decodeURIComponent(match[1]);
-          if (decoded.includes("masothue.com/") && /\d{10}/.test(decoded)) {
-            matchedCompanyUrl = decoded;
-            break;
-          }
-        }
-
-        if (matchedCompanyUrl) {
-          console.log("Scraper found URL slug: " + matchedCompanyUrl);
-          const companyRes = await fetch(matchedCompanyUrl, {
-            headers: {
-              "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36",
-              "Accept-Language": "vi,en-US;q=0.9,en;q=0.8",
-              "Accept": "text/html,application/xhtml+xml,application/xml;q=0.9,image/webp,*/*;q=0.8"
-            }
-          });
-
-          if (companyRes.ok) {
-            const pageHtml = await companyRes.text();
-            
-            // Extract taxID
-            let taxId = "";
-            const taxIdMatch = pageHtml.match(/itemprop="taxID"[^>]*>([^<]+)/i);
-            if (taxIdMatch) {
-              taxId = taxIdMatch[1].trim().replace(/<[^>]+>/g, '');
-            }
-            if (!taxId) {
-              const urlDigits = matchedCompanyUrl.match(/\/(\d{10}(\d{3})?)/);
-              if (urlDigits) {
-                taxId = urlDigits[1];
-              }
-            }
-
-            // Extract Name
-            let name = "";
-            const h1Match = pageHtml.match(/<h1[^>]*>([\s\S]*?)<\/h1>/i);
-            if (h1Match) {
-              name = h1Match[1].replace(/<[^>]+>/g, '').trim();
-              if (name.includes(" - ")) {
-                const parts = name.split(" - ");
-                if (parts[1]) name = parts[1].trim();
-              }
-            }
-            if (!name) {
-              const titleMatch = pageHtml.match(/<title>([^<]+)<\/title>/i);
-              if (titleMatch) {
-                name = titleMatch[1].trim();
-                if (name.includes(" - ")) {
-                  const parts = name.split(" - ");
-                  if (parts[1]) name = parts[1].trim();
-                }
-              }
-            }
-
-            // Extract Address
-            let address = "";
-            const addrMatch1 = pageHtml.match(/itemprop="address"[^>]*>([^<]+)/i);
-            if (addrMatch1) {
-              address = addrMatch1[1].trim().replace(/<[^>]+>/g, '');
-            }
-            if (!address) {
-              const addrMatch2 = pageHtml.match(/Địa chỉ Thuế<\/td>\s*<td[^>]*>([\s\S]*?)<\/td>/i);
-              if (addrMatch2) {
-                address = addrMatch2[1].trim().replace(/<[^>]+>/g, '');
-              }
-            }
-            if (!address) {
-              const addrMatch3 = pageHtml.match(/Địa chỉ<\/td>\s*<td[^>]*>([\s\S]*?)<\/td>/i);
-              if (addrMatch3) {
-                address = addrMatch3[1].trim().replace(/<[^>]+>/g, '');
-              }
-            }
-
-            if (taxId || address || name) {
-              responseData = {
-                name: name.replace(/\r?\n|\r/g, " ").trim(),
-                address: address.replace(/\r?\n|\r/g, " ").trim(),
-                taxId: taxId.trim()
-              };
-              scraperSuccess = true;
-              console.log("Scraped tax info successfully:", responseData);
-            }
-          }
-        }
-      }
-    } catch (scErr: any) {
-      console.warn("Direct HTML Scraper failed, falling back to Gemini text lookup:", scErr.message || scErr);
     }
-
-    // 2. Fallback to standard Gemini text generation WITHOUT search grounding tools (zero search quota / zero 429 risk)
-    if (!scraperSuccess) {
-      const apiKey = process.env.GEMINI_API_KEY || process.env.VITE_GEMINI_API_KEY;
-      if (!apiKey) {
-        return res.status(500).json({
-          error: "GEMINI_API_KEY or VITE_GEMINI_API_KEY is not configured on the server. Please check your Vercel Environment Variables.",
-        });
+    const aiClient = getGeminiClient();
+    const prompt = `Tra cứu thông tin doanh nghiệp "${query}" tại Việt Nam thông qua Google Search (ưu tiên các trang như masothue.com). Hãy tìm Tên công ty đầy đủ bằng tiếng Việt (tên chính thức), Mã số thuế, và Địa chỉ công ty. Trả về đúng định dạng JSON: {"name": "Tên công ty tiếng Việt", "address": "Địa chỉ", "taxId": "Mã số thuế"}. Chỉ trả về duy nhất chuỗi JSON, không có code block hay nội dung thừa.`;
+    
+    // Utilize gemini with googleSearch tool to fetch real-time public data
+    const response = await aiClient.models.generateContent({
+      model: "gemini-2.5-flash",
+      contents: prompt,
+      config: {
+        tools: [{ googleSearch: {} }]
       }
-
-      console.log("Using Gemini standard fallback text parsing (no tools, zero risk of 429 quote limit error)...");
-      const aiClient = getGeminiClient();
-      const prompt = `Tra cứu thông tin danh nghiệp Việt Nam tên là "${query}". Hãy tìm và suy luận Mã Số Thuế (taxId) và Địa chỉ đầy đủ (address). Trả về duy nhất string JSON thuần túy có dạng: {"name": "Tên công ty tiếng Việt", "address": "Địa chỉ", "taxId": "Mã số thuế"}. Nếu không biết, hãy điền trống rỗng cho các trường đó. Không trả về thêm bất kỳ ký tự nào, không dùng code blocks \`\`\`json.`;
-
-      const response = await aiClient.models.generateContent({
-        model: "gemini-3.5-flash",
-        contents: prompt
-      });
-
-      let textInfo = response.text || "{}";
-      if (textInfo.includes('```json')) {
-        textInfo = textInfo.replace(/```json\n?/g, '').replace(/```/g, '');
-      }
-      responseData = parseSafeJson(textInfo);
+    });
+    
+    let textInfo = response.text || "{}";
+    if (textInfo.includes('```json')) {
+      textInfo = textInfo.replace(/```json\n?/g, '').replace(/```/g, '');
     }
-
-    res.json(responseData);
+    const data = JSON.parse(textInfo);
+    res.json(data);
   } catch (error: any) {
-    console.error("Error fetching company details:", error);
+    console.error("Error fetching company info:", error);
     res.status(500).json({ error: error.message });
   }
 });
@@ -571,10 +408,10 @@ app.post("/api/extract", async (req, res) => {
       return res.status(400).json({ error: "Missing fileBase64 or mimeType" });
     }
 
-    const apiKey = process.env.GEMINI_API_KEY || process.env.VITE_GEMINI_API_KEY;
+    const apiKey = process.env.GEMINI_API_KEY;
     if (!apiKey) {
       return res.status(500).json({
-        error: "GEMINI_API_KEY or VITE_GEMINI_API_KEY is not configured on the server. Please check your Vercel Environment Variables.",
+        error: "GEMINI_API_KEY is not configured on the server. Please check your Vercel Environment Variables.",
       });
     }
 
@@ -676,9 +513,9 @@ app.post("/api/extract", async (req, res) => {
     };
 
     async function generateJsonWithFallback(contents: any) {
-      // Prioritize modern Gemini models with multi-model fallback to bypass high-demand 503 spikes or timeouts
+      // Prioritize gemini-2.5-flash for maximum speed (often < 5s) to bypass Vercel's 10s limit
       const isVercel = !!process.env.VERCEL;
-      const models = ["gemini-3.5-flash", "gemini-flash-latest", "gemini-3.1-flash-lite", "gemini-2.5-flash"];
+      const models = ["gemini-2.5-flash", "gemini-1.5-flash"];
       const maxAttempts = isVercel ? 1 : 2;
       let lastError: any = null;
 
@@ -743,7 +580,7 @@ app.post("/api/extract", async (req, res) => {
     }
 
     const resultText = response.text || "{}";
-    const data = parseSafeJson(resultText);
+    const data = JSON.parse(resultText);
     data.note = ""; // Ensure notes field starts blank for manual entry as requested
     res.json(data);
   } catch (error: any) {
