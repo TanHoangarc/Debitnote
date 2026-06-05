@@ -60,8 +60,28 @@ if (fs.existsSync(firebaseConfigPath)) {
   console.log("Firebase config file not found, utilizing bundled static configuration fallback.");
 }
 
-const firebaseApp = getApps().length === 0 ? initializeApp(firebaseConfig) : getApp();
-const db = getFirestore(firebaseApp, firebaseConfig.firestoreDatabaseId);
+let firebaseApp: any = null;
+let db: any = null;
+
+try {
+  firebaseApp = getApps().length === 0 ? initializeApp(firebaseConfig) : getApp();
+  db = getFirestore(firebaseApp, firebaseConfig.firestoreDatabaseId);
+} catch (fbErr: any) {
+  console.warn("Failsafe Firebase Instantiation Warning: Could not initialize database.", fbErr.message || fbErr);
+}
+
+// Ensure database endpoints fail gracefully instead of throwing type errors if Firebase is offline
+app.use((req, res, next) => {
+  const isDbRoute = req.path.startsWith("/api/fees") || 
+                    req.path.startsWith("/api/customers") || 
+                    req.path.startsWith("/api/history");
+  if (isDbRoute && !db) {
+    return res.status(503).json({ 
+      error: "Mục cơ sở dữ liệu Firebase chưa được kết nối hoặc cấu hình đúng ở nền tảng Vercel. Vui lòng sử dụng tính năng lưu trữ Offline (LocalStorage) hiện tại để tiếp tục!" 
+    });
+  }
+  next();
+});
 
 // --- FIREBASE ERROR HANDLING SUPPORT ---
 enum OperationType {
