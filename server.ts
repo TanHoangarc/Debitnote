@@ -44,6 +44,14 @@ try {
 const app = express();
 const PORT = 3000;
 
+// Fix for Vercel Serverless parsing body before Express
+app.use((req, res, next) => {
+  if (req.body && typeof req.body === 'object' && Object.keys(req.body).length > 0) {
+    (req as any)._body = true; // Tell Express body-parser it's already parsed
+  }
+  next();
+});
+
 // Set up larger limit for base64 file uploads
 app.use(express.json({ limit: "50mb" }));
 app.use(express.urlencoded({ limit: "50mb", extended: true }));
@@ -92,7 +100,7 @@ interface FirestoreErrorInfo {
   }
 }
 
-function handleFirestoreError(error: unknown, operationType: OperationType, path: string | null) {
+function handleFirestoreError(error: unknown, operationType: OperationType, path: string | null, res: any) {
   const errInfo: FirestoreErrorInfo = {
     error: error instanceof Error ? error.message : String(error),
     authInfo: {
@@ -103,7 +111,7 @@ function handleFirestoreError(error: unknown, operationType: OperationType, path
     path
   };
   console.error('Firestore Error: ', JSON.stringify(errInfo));
-  throw new Error(JSON.stringify(errInfo));
+  res.status(500).json(errInfo);
 }
 
 // Seed Initial Fees List
@@ -179,11 +187,7 @@ app.get("/api/fees", async (req, res) => {
     }
     res.json(fees);
   } catch (error) {
-    try {
-      handleFirestoreError(error, OperationType.LIST, "fees");
-    } catch (err: any) {
-      res.status(500).json({ error: err.message });
-    }
+    handleFirestoreError(error, OperationType.LIST, "fees", res);
   }
 });
 
@@ -202,11 +206,7 @@ app.post("/api/fees", async (req, res) => {
     await setDoc(doc(db, "fees", formattedFee.id), formattedFee);
     res.json({ success: true, fee: formattedFee });
   } catch (error) {
-    try {
-      handleFirestoreError(error, OperationType.WRITE, "fees");
-    } catch (err: any) {
-      res.status(500).json({ error: err.message });
-    }
+    handleFirestoreError(error, OperationType.WRITE, "fees", res);
   }
 });
 
@@ -216,11 +216,7 @@ app.delete("/api/fees/:id", async (req, res) => {
     await deleteDoc(doc(db, "fees", id));
     res.json({ success: true });
   } catch (error) {
-    try {
-      handleFirestoreError(error, OperationType.DELETE, `fees/${id}`);
-    } catch (err: any) {
-      res.status(500).json({ error: err.message });
-    }
+    handleFirestoreError(error, OperationType.DELETE, `fees/${id}`, res);
   }
 });
 
@@ -245,11 +241,7 @@ app.get("/api/customers", async (req, res) => {
     }
     res.json(customers);
   } catch (error) {
-    try {
-      handleFirestoreError(error, OperationType.LIST, "customers");
-    } catch (err: any) {
-      res.status(500).json({ error: err.message });
-    }
+    handleFirestoreError(error, OperationType.LIST, "customers", res);
   }
 });
 
@@ -268,11 +260,7 @@ app.post("/api/customers", async (req, res) => {
     await setDoc(doc(db, "customers", formattedCustomer.id), formattedCustomer);
     res.json({ success: true, customer: formattedCustomer });
   } catch (error) {
-    try {
-      handleFirestoreError(error, OperationType.WRITE, "customers");
-    } catch (err: any) {
-      res.status(500).json({ error: err.message });
-    }
+    handleFirestoreError(error, OperationType.WRITE, "customers", res);
   }
 });
 
@@ -282,11 +270,7 @@ app.delete("/api/customers/:id", async (req, res) => {
     await deleteDoc(doc(db, "customers", id));
     res.json({ success: true });
   } catch (error) {
-    try {
-      handleFirestoreError(error, OperationType.DELETE, `customers/${id}`);
-    } catch (err: any) {
-      res.status(500).json({ error: err.message });
-    }
+    handleFirestoreError(error, OperationType.DELETE, `customers/${id}`, res);
   }
 });
 
@@ -302,11 +286,7 @@ app.get("/api/history", async (req, res) => {
     });
     res.json(debitNotes);
   } catch (error) {
-    try {
-      handleFirestoreError(error, OperationType.LIST, "history");
-    } catch (err: any) {
-      res.status(500).json({ error: err.message });
-    }
+    handleFirestoreError(error, OperationType.LIST, "history", res);
   }
 });
 
@@ -351,11 +331,7 @@ app.post("/api/history", async (req, res) => {
     await setDoc(doc(db, "history", formattedNote.id), formattedNote);
     res.json({ success: true, debitNote: formattedNote });
   } catch (error) {
-    try {
-      handleFirestoreError(error, OperationType.WRITE, "history");
-    } catch (err: any) {
-      res.status(500).json({ error: err.message });
-    }
+    handleFirestoreError(error, OperationType.WRITE, "history", res);
   }
 });
 
@@ -365,11 +341,7 @@ app.delete("/api/history/:id", async (req, res) => {
     await deleteDoc(doc(db, "history", id));
     res.json({ success: true });
   } catch (error) {
-    try {
-      handleFirestoreError(error, OperationType.DELETE, `history/${id}`);
-    } catch (err: any) {
-      res.status(500).json({ error: err.message });
-    }
+    handleFirestoreError(error, OperationType.DELETE, `history/${id}`, res);
   }
 });
 
