@@ -7,7 +7,16 @@ import mammoth from "mammoth";
 import dotenv from "dotenv";
 import { initializeApp, getApps, getApp } from "firebase/app";
 import { getFirestore, doc, getDocs, setDoc, deleteDoc, collection } from "firebase/firestore/lite";
-import { firebaseConfigStatic } from "./firebase-config";
+const firebaseConfigStatic = {
+  projectId: "gen-lang-client-0434936587",
+  appId: "1:388484179450:web:4577c374907edacfb77043",
+  apiKey: "AIzaSyCx3YvGqsnKR5LMkFkj7RYud8Z1IjM5PnA",
+  authDomain: "gen-lang-client-0434936587.firebaseapp.com",
+  firestoreDatabaseId: "ai-studio-f548a744-ec01-415c-bcc2-9013bc2ef9a2",
+  storageBucket: "gen-lang-client-0434936587.firebasestorage.app",
+  messagingSenderId: "388484179450",
+  measurementId: ""
+};
 
 // Load environment variables
 dotenv.config();
