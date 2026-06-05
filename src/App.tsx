@@ -135,7 +135,8 @@ export default function App() {
       reader.onload = (e) => {
         const img = new Image();
         img.onload = () => {
-          const maxDim = 1600;
+          // Giảm maxDim xuống 1024 để tăng tốc độ truyền tải trên Vercel
+          const maxDim = 1024;
           let width = img.width;
           let height = img.height;
           
@@ -154,8 +155,8 @@ export default function App() {
             const ctx = canvas.getContext("2d");
             if (ctx) {
               ctx.drawImage(img, 0, 0, width, height);
-              // Use JPEG with 0.8 quality to drastically compress base64 payload size
-              const compressedBase64 = canvas.toDataURL("image/jpeg", 0.82);
+              // Giảm chất lượng JPEG xuống 0.75 để tối ưu tối đa dung lượng Base64
+              const compressedBase64 = canvas.toDataURL("image/jpeg", 0.75);
               resolve(compressedBase64.split(",")[1]);
               return;
             }
@@ -382,19 +383,34 @@ export default function App() {
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify(cust),
       });
-      if (!response.ok) throw new Error();
+      if (!response.ok) {
+        let errMsg = "Lỗi không xác định";
+        try {
+           const errData = await response.json();
+           errMsg = errData.error || errData.message || response.statusText;
+        } catch(e) {}
+        throw new Error(errMsg);
+      }
       fetchMasterData();
-    } catch {
-      alert("Không thể đồng bộ dữ liệu Khách hàng mới.");
+    } catch (e: any) {
+      alert("Không thể đồng bộ dữ liệu Khách hàng mới: " + e.message);
     }
   };
 
   const handleDeleteMasterCustomer = async (id: string) => {
     try {
-      await fetch(`/api/customers/${id}`, { method: "DELETE" });
+      const response = await fetch(`/api/customers/${id}`, { method: "DELETE" });
+      if (!response.ok) {
+        let errMsg = "Lỗi không xác định";
+        try {
+           const errData = await response.json();
+           errMsg = errData.error || errData.message || response.statusText;
+        } catch(e) {}
+        throw new Error(errMsg);
+      }
       fetchMasterData();
-    } catch {
-      alert("Thất bại khi xóa khách hàng.");
+    } catch (e: any) {
+      alert("Thất bại khi xóa khách hàng: " + e.message);
     }
   };
 
@@ -406,19 +422,34 @@ export default function App() {
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify(fee),
       });
-      if (!response.ok) throw new Error();
+      if (!response.ok) {
+        let errMsg = "Lỗi không xác định";
+        try {
+           const errData = await response.json();
+           errMsg = errData.error || errData.message || response.statusText;
+        } catch(e) {}
+        throw new Error(errMsg);
+      }
       fetchMasterData();
-    } catch {
-      alert("Không thể lưu loại phí mới vào database.");
+    } catch (e: any) {
+      alert("Không thể lưu loại phí mới vào database: " + e.message);
     }
   };
 
   const handleDeleteMasterFee = async (id: string) => {
     try {
-      await fetch(`/api/fees/${id}`, { method: "DELETE" });
+      const response = await fetch(`/api/fees/${id}`, { method: "DELETE" });
+      if (!response.ok) {
+        let errMsg = "Lỗi không xác định";
+        try {
+           const errData = await response.json();
+           errMsg = errData.error || errData.message || response.statusText;
+        } catch(e) {}
+        throw new Error(errMsg);
+      }
       fetchMasterData();
-    } catch {
-      alert("Thất bại khi xóa loại phí.");
+    } catch (e: any) {
+      alert("Thất bại khi xóa loại phí: " + e.message);
     }
   };
 
