@@ -301,14 +301,12 @@ app.post("/api/search-company", express.json(), async (req, res) => {
       model: "gemini-2.5-flash",
       contents: prompt,
       config: {
-        tools: [{ googleSearch: {} }]
+        tools: [{ googleSearch: {} }],
+        responseMimeType: "application/json"
       }
     });
     
-    let textInfo = response.text || "{}";
-    if (textInfo.includes('```json')) {
-      textInfo = textInfo.replace(/```json\n?/g, '').replace(/```/g, '');
-    }
+    const textInfo = response.text || "{}";
     const data = JSON.parse(textInfo);
     res.json(data);
   } catch (error: any) {
