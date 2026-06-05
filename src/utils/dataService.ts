@@ -79,19 +79,6 @@ function setLocalStorageItem<T>(key: string, value: T): void {
 
 // --- FEES SERVICE ---
 export async function getFees(): Promise<Fee[]> {
-  const hasBackend = await checkBackendAvailability();
-  if (hasBackend) {
-    try {
-      const res = await fetch("/api/fees");
-      if (res.ok) {
-        const data = await res.json();
-        setLocalStorageItem("fees_db", data);
-        return data;
-      }
-    } catch (e) {
-      console.warn("Express fees fetch failed, falling back to local storage:", e);
-    }
-  }
   return getLocalStorageItem<Fee[]>("fees_db", defaultFees);
 }
 
@@ -105,20 +92,6 @@ export async function saveFee(fee: Fee): Promise<void> {
     list.push(fee);
   }
   setLocalStorageItem("fees_db", list);
-
-  // Sync to database
-  const hasBackend = await checkBackendAvailability();
-  if (hasBackend) {
-    try {
-      await fetch("/api/fees", {
-        method: "POST",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify(fee),
-      });
-    } catch (e) {
-      console.error("Express sync error saving fee:", e);
-    }
-  }
 }
 
 export async function deleteFee(id: string): Promise<void> {
@@ -126,34 +99,11 @@ export async function deleteFee(id: string): Promise<void> {
   const list = await getFees();
   const updated = list.filter(f => f.id !== id);
   setLocalStorageItem("fees_db", updated);
-
-  // Sync to database
-  const hasBackend = await checkBackendAvailability();
-  if (hasBackend) {
-    try {
-      await fetch(`/api/fees/${id}`, { method: "DELETE" });
-    } catch (e) {
-      console.error("Express sync error deleting fee:", e);
-    }
-  }
 }
 
 
 // --- CUSTOMERS SERVICE ---
 export async function getCustomers(): Promise<Customer[]> {
-  const hasBackend = await checkBackendAvailability();
-  if (hasBackend) {
-    try {
-      const res = await fetch("/api/customers");
-      if (res.ok) {
-        const data = await res.json();
-        setLocalStorageItem("customers_db", data);
-        return data;
-      }
-    } catch (e) {
-      console.warn("Express customers fetch failed, falling back to local storage:", e);
-    }
-  }
   return getLocalStorageItem<Customer[]>("customers_db", defaultCustomers);
 }
 
@@ -167,20 +117,6 @@ export async function saveCustomer(customer: Customer): Promise<void> {
     list.push(customer);
   }
   setLocalStorageItem("customers_db", list);
-
-  // Sync to database
-  const hasBackend = await checkBackendAvailability();
-  if (hasBackend) {
-    try {
-      await fetch("/api/customers", {
-        method: "POST",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify(customer),
-      });
-    } catch (e) {
-      console.error("Express sync error saving customer:", e);
-    }
-  }
 }
 
 export async function deleteCustomer(id: string): Promise<void> {
@@ -188,34 +124,11 @@ export async function deleteCustomer(id: string): Promise<void> {
   const list = await getCustomers();
   const updated = list.filter(c => c.id !== id);
   setLocalStorageItem("customers_db", updated);
-
-  // Sync to database
-  const hasBackend = await checkBackendAvailability();
-  if (hasBackend) {
-    try {
-      await fetch(`/api/customers/${id}`, { method: "DELETE" });
-    } catch (e) {
-      console.error("Express sync error deleting customer:", e);
-    }
-  }
 }
 
 
 // --- DEBIT NOTE HISTORY SERVICE ---
 export async function getHistory(): Promise<DebitNote[]> {
-  const hasBackend = await checkBackendAvailability();
-  if (hasBackend) {
-    try {
-      const res = await fetch("/api/history");
-      if (res.ok) {
-        const data = await res.json();
-        setLocalStorageItem("history_db", data);
-        return data;
-      }
-    } catch (e) {
-      console.warn("Express history fetch failed, falling back to local storage:", e);
-    }
-  }
   return getLocalStorageItem<DebitNote[]>("history_db", []);
 }
 
@@ -238,25 +151,6 @@ export async function saveHistoryNote(note: DebitNote): Promise<DebitNote> {
   }
   setLocalStorageItem("history_db", list);
 
-  // Sync to database
-  const hasBackend = await checkBackendAvailability();
-  if (hasBackend) {
-    try {
-      const res = await fetch("/api/history", {
-        method: "POST",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify(mutableNote),
-      });
-      if (res.ok) {
-        const resJson = await res.json();
-        if (resJson.debitNote) {
-          return resJson.debitNote;
-        }
-      }
-    } catch (e) {
-      console.error("Express sync error saving history:", e);
-    }
-  }
   return mutableNote;
 }
 
@@ -265,16 +159,6 @@ export async function deleteHistoryNote(id: string): Promise<void> {
   const list = await getHistory();
   const updated = list.filter(h => h.id !== id);
   setLocalStorageItem("history_db", updated);
-
-  // Sync to database
-  const hasBackend = await checkBackendAvailability();
-  if (hasBackend) {
-    try {
-      await fetch(`/api/history/${id}`, { method: "DELETE" });
-    } catch (e) {
-      console.error("Express sync error deleting history:", e);
-    }
-  }
 }
 
 

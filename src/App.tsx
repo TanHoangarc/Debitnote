@@ -5,7 +5,7 @@ import DebitNotePreview from "./components/DebitNotePreview";
 import HistorySidebar from "./components/HistorySidebar";
 import MasterDataTab from "./components/MasterDataTab";
 import { Upload, FileText, Database, Layers, Sparkles, RefreshCw, Printer, AlertTriangle, CheckSquare, X } from "lucide-react";
-import { extractDocumentData } from "./utils/dataService";
+import { extractDocumentData, getHistory, getCustomers, getFees, saveHistoryNote, deleteHistoryNote, saveCustomer, deleteCustomer, saveFee, deleteFee } from "./utils/dataService";
 
 const parseVolume = (volumeStr: string): { qty?: number; unit: string } => {
   const clean = (volumeStr || "").trim().toUpperCase();
@@ -75,12 +75,6 @@ const createNewBlankDebitNote = (): DebitNote => ({
 });
 
 export default function App() {
-  // Authentication State
-  const [loggedInUser, setLoggedInUser] = useState<string | null>(null);
-  const [loginUsername, setLoginUsername] = useState("");
-  const [loginPassword, setLoginPassword] = useState("");
-  const [loginError, setLoginError] = useState("");
-
   // Navigation active tab: 'debit' or 'data'
   const [activeTab, setActiveTab] = useState<"debit" | "data">("debit");
 
@@ -114,41 +108,23 @@ export default function App() {
     "Tính toán hoàn thiện dữ liệu để kết xuất form mẫu..."
   ];
 
-  const handleLogin = (e: React.FormEvent) => {
-    e.preventDefault();
-    const creds: Record<string, string> = {
-      "Document": "Longhoang@125",
-      "Account": "Longhoang@129",
-      "Admin": "Longhoang@120"
-    };
-
-    if (creds[loginUsername] && creds[loginUsername] === loginPassword) {
-      setLoggedInUser(loginUsername);
-      setLoginError("");
-    } else {
-      setLoginError("Tên đăng nhập hoặc mật khẩu không chính xác.");
-    }
-  };
-
   // Fetch initial master lists on mount
   useEffect(() => {
-    if (loggedInUser) {
-      fetchMasterData();
-    }
-  }, [loggedInUser]);
+    fetchMasterData();
+  }, []);
 
   const fetchMasterData = async () => {
     try {
       const [resHistory, resCustomers, resFees] = await Promise.all([
-        fetch("/api/history").then((r) => r.json()),
-        fetch("/api/customers").then((r) => r.json()),
-        fetch("/api/fees").then((r) => r.json()),
+        getHistory(),
+        getCustomers(),
+        getFees(),
       ]);
       setHistory(resHistory || []);
       setCustomers(resCustomers || []);
       setFees(resFees || []);
     } catch (err) {
-      console.error("Lỗi lấy dữ liệu từ server:", err);
+      console.error("Lỗi lấy dữ liệu lưu cục bộ:", err);
     }
   };
 
@@ -337,41 +313,17 @@ export default function App() {
       alert("Hóa đơn phải đi kèm Tên khách hàng (TO)!");
       return;
     }
-
-    if (!activeNote.id && activeNote.jobNo && activeNote.jobNo.trim()) {
-      const existingJob = history.find((n) => n.jobNo.trim() === activeNote.jobNo.trim());
-      if (existingJob) {
-        const wantsToLoad = window.confirm(
-          `Cảnh báo: Job No "${activeNote.jobNo}" đã tồn tại trong hệ thống.\n\nBạn muốn tải dữ liệu cũ (OK) hay vẫn tiếp tục lưu mới (Cancel)?`
-        );
-        if (wantsToLoad) {
-          handleSelectHistoryNote(existingJob);
-          return;
-        }
-      }
-    }
-
     setIsSaving(true);
     try {
-      const response = await fetch("/api/history", {
-        method: "POST",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify(activeNote),
-      });
-
-      if (!response.ok) {
-        throw new Error("Không thể lưu hóa đơn.");
-      }
-
-      const resJson = await response.json();
-      alert("Đã lưu trữ Debit Note thành công!");
+      const savedNote = await saveHistoryNote(activeNote);
+      alert("Đã lưu trữ Debit Note thành công (cục bộ)!");
       
       // Update local history lists
       fetchMasterData();
       
       // Bind exact ID back to avoid duplications on subsequent edits
-      if (resJson.debitNote) {
-        setActiveNote(resJson.debitNote);
+      if (savedNote) {
+        setActiveNote(savedNote);
       }
     } catch (err) {
       alert("Xảy ra lỗi khi lưu hóa đơn: " + err);
@@ -400,8 +352,7 @@ export default function App() {
   // Action: Delete historic note
   const handleDeleteHistoryNote = async (id: string) => {
     try {
-      const response = await fetch(`/api/history/${id}`, { method: "DELETE" });
-      if (!response.ok) throw new Error();
+      await deleteHistoryNote(id);
       
       // If we deleted the active note, replace form with fresh values
       if (activeNote.id === id) {
@@ -416,46 +367,16 @@ export default function App() {
   // Action: Manage Customer Add/Delete
   const handleAddMasterCustomer = async (cust: Customer) => {
     try {
-      const response = await fetch("/api/customers", {
-        method: "POST",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify(cust),
-      });
-      if (!response.ok) {
-        let errMsg = `Lỗi HTTP ${response.status} (${response.statusText})`;
-        try {
-           const text = await response.text();
-           try {
-             const errData = JSON.parse(text);
-             errMsg = (errData.error || errData.message || errMsg) + (typeof errData.error === 'string' ? '' : JSON.stringify(errData));
-           } catch(e) {
-             errMsg = text.substring(0, 150) || errMsg;
-           }
-        } catch(e) {}
-        throw new Error(errMsg);
-      }
+      await saveCustomer(cust);
       fetchMasterData();
     } catch (e: any) {
-      alert("Không thể đồng bộ dữ liệu Khách hàng mới: " + e.message);
+      alert("Không thể lưu dữ liệu Khách hàng mới: " + e.message);
     }
   };
 
   const handleDeleteMasterCustomer = async (id: string) => {
     try {
-      const response = await fetch(`/api/customers/${id}`, { method: "DELETE" });
-      if (!response.ok) {
-        let errMsg = `Lỗi HTTP ${response.status} (${response.statusText})`;
-        try {
-           const text = await response.text();
-           try {
-             const errData = JSON.parse(text);
-             errMsg = (errData.error || errData.message || errMsg) + (typeof errData.error === 'string' ? '' : JSON.stringify(errData));
-           } catch(e) {
-             errMsg = text.substring(0, 150) || errMsg;
-           }
-        } catch(e) {}
-        throw new Error(errMsg);
-      }
+      await deleteCustomer(id);
       fetchMasterData();
     } catch (e: any) {
       alert("Thất bại khi xóa khách hàng: " + e.message);
@@ -465,99 +386,21 @@ export default function App() {
   // Action: Manage Fee Add/Delete
   const handleAddMasterFee = async (fee: Fee) => {
     try {
-      const response = await fetch("/api/fees", {
-        method: "POST",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify(fee),
-      });
-      if (!response.ok) {
-        let errMsg = `Lỗi HTTP ${response.status} (${response.statusText})`;
-        try {
-           const text = await response.text();
-           try {
-             const errData = JSON.parse(text);
-             errMsg = (errData.error || errData.message || errMsg) + (typeof errData.error === 'string' ? '' : JSON.stringify(errData));
-           } catch(e) {
-             errMsg = text.substring(0, 150) || errMsg;
-           }
-        } catch(e) {}
-        throw new Error(errMsg);
-      }
+      await saveFee(fee);
       fetchMasterData();
     } catch (e: any) {
-      alert("Không thể lưu loại phí mới vào database: " + e.message);
+      alert("Không thể lưu loại phí mới cục bộ: " + e.message);
     }
   };
 
   const handleDeleteMasterFee = async (id: string) => {
     try {
-      const response = await fetch(`/api/fees/${id}`, { method: "DELETE" });
-      if (!response.ok) {
-        let errMsg = `Lỗi HTTP ${response.status} (${response.statusText})`;
-        try {
-           const text = await response.text();
-           try {
-             const errData = JSON.parse(text);
-             errMsg = (errData.error || errData.message || errMsg) + (typeof errData.error === 'string' ? '' : JSON.stringify(errData));
-           } catch(e) {
-             errMsg = text.substring(0, 150) || errMsg;
-           }
-        } catch(e) {}
-        throw new Error(errMsg);
-      }
+      await deleteFee(id);
       fetchMasterData();
     } catch (e: any) {
       alert("Thất bại khi xóa loại phí: " + e.message);
     }
   };
-
-  if (!loggedInUser) {
-    return (
-      <div className="min-h-screen bg-slate-100 flex items-center justify-center p-4 text-slate-800">
-        <div className="bg-white p-8 rounded-2xl shadow-xl max-w-sm w-full border border-slate-200">
-          <div className="flex justify-center mb-6">
-            <div className="bg-emerald-600 p-3 rounded-lg shadow-inner">
-              <FileText size={32} className="text-white" />
-            </div>
-          </div>
-          <h2 className="text-2xl font-bold text-center text-slate-800 mb-2">Đăng nhập hệ thống</h2>
-          <p className="text-center text-slate-500 text-sm mb-6">Hệ thống quản lý Logi-Note chuyên nghiệp</p>
-          
-          {loginError && (
-            <div className="bg-rose-50 text-rose-600 p-3 rounded text-sm mb-4 border border-rose-200 text-center font-medium">
-              {loginError}
-            </div>
-          )}
-
-          <form onSubmit={handleLogin} className="space-y-4">
-            <div>
-              <label className="block text-xs font-bold text-slate-600 mb-1">Tài khoản</label>
-              <input 
-                type="text" 
-                value={loginUsername} 
-                onChange={(e) => setLoginUsername(e.target.value)} 
-                className="w-full border border-slate-300 rounded-lg p-2.5 focus:ring-2 focus:ring-emerald-500 focus:outline-none" 
-                required 
-              />
-            </div>
-            <div>
-              <label className="block text-xs font-bold text-slate-600 mb-1">Mật khẩu</label>
-              <input 
-                type="password" 
-                value={loginPassword} 
-                onChange={(e) => setLoginPassword(e.target.value)} 
-                className="w-full border border-slate-300 rounded-lg p-2.5 focus:ring-2 focus:ring-emerald-500 focus:outline-none" 
-                required 
-              />
-            </div>
-            <button type="submit" className="w-full bg-emerald-600 text-white font-bold rounded-lg p-2.5 hover:bg-emerald-700 transition">
-              Đăng nhập
-            </button>
-          </form>
-        </div>
-      </div>
-    );
-  }
 
   return (
     <div className="min-h-screen bg-slate-50 flex flex-col font-sans text-slate-800">
@@ -577,46 +420,25 @@ export default function App() {
             </div>
           </div>
 
-          <div className="flex items-center gap-6">
-            <div className="flex bg-slate-800 p-1.5 rounded-lg border border-slate-700 font-medium">
-              <button
-                onClick={() => setActiveTab("debit")}
-                className={`flex items-center gap-1.5 px-4 py-1.5 rounded text-xs transition cursor-pointer select-none ${
-                  activeTab === "debit" ? "bg-emerald-600 text-white shadow-xs font-bold" : "text-slate-300 hover:text-white"
-                }`}
-              >
-                <FileText size={14} />
-                Debit Note Layout
-              </button>
-              <button
-                onClick={() => setActiveTab("data")}
-                className={`flex items-center gap-1.5 px-4 py-1.5 rounded text-xs transition cursor-pointer select-none ${
-                  activeTab === "data" ? "bg-emerald-600 text-white shadow-xs font-bold" : "text-slate-300 hover:text-white"
-                }`}
-              >
-                <Database size={14} />
-                Master Database (Danh mục)
-              </button>
-            </div>
-
-            <div className="flex items-center gap-3 border-l border-slate-700 pl-6">
-              <span className="text-xs font-semibold text-slate-300">
-                 Xin chào, <span className="text-emerald-400">{loggedInUser}</span>
-              </span>
-              <button 
-                 onClick={fetchMasterData}
-                 title="Làm mới dữ liệu từ máy chủ (Đồng bộ với người khác)"
-                 className="p-1.5 rounded bg-slate-800 border border-slate-600 text-emerald-400 hover:bg-slate-700 hover:text-emerald-300 transition"
-              >
-                 <RefreshCw size={14} />
-              </button>
-              <button 
-                 onClick={() => { setLoggedInUser(null); setLoginUsername(""); setLoginPassword(""); }}
-                 className="text-xs bg-slate-800 hover:bg-slate-700 text-slate-300 px-3 py-1.5 rounded border border-slate-600 transition"
-              >
-                Đăng xuất
-              </button>
-            </div>
+          <div className="flex bg-slate-800 p-1.5 rounded-lg border border-slate-700 font-medium">
+            <button
+              onClick={() => setActiveTab("debit")}
+              className={`flex items-center gap-1.5 px-4 py-1.5 rounded text-xs transition cursor-pointer select-none ${
+                activeTab === "debit" ? "bg-emerald-600 text-white shadow-xs font-bold" : "text-slate-300 hover:text-white"
+              }`}
+            >
+              <FileText size={14} />
+              Debit Note Layout
+            </button>
+            <button
+              onClick={() => setActiveTab("data")}
+              className={`flex items-center gap-1.5 px-4 py-1.5 rounded text-xs transition cursor-pointer select-none ${
+                activeTab === "data" ? "bg-emerald-600 text-white shadow-xs font-bold" : "text-slate-300 hover:text-white"
+              }`}
+            >
+              <Database size={14} />
+              Master Database (Danh mục)
+            </button>
           </div>
         </div>
       </header>
