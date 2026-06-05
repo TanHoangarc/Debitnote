@@ -286,33 +286,146 @@ app.post("/api/search-company", express.json(), async (req, res) => {
   if (!query) {
     return res.status(400).json({ error: "Missing query" });
   }
+
   try {
-    const apiKey = process.env.GEMINI_API_KEY;
-    if (!apiKey) {
-      return res.status(500).json({
-        error: "GEMINI_API_KEY is not configured.",
+    let responseData = { name: "", address: "", taxId: "" };
+    let scraperSuccess = false;
+
+    // 1. Try DuckDuckGo Scraper on masothue.com to avoid Gemini Search Grounding rate-limiting quotas
+    try {
+      console.log(`Starting web crawler search for: ${query}`);
+      const ddgUrl = `https://html.duckduckgo.com/html/?q=site:masothue.com+${encodeURIComponent(query)}`;
+      const ddgRes = await fetch(ddgUrl, {
+        headers: {
+          "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36",
+          "Accept": "text/html,application/xhtml+xml,application/xml;q=0.9,*/*;q=0.8"
+        }
       });
-    }
-    const aiClient = getGeminiClient();
-    const prompt = `Tra cứu thông tin doanh nghiệp "${query}" tại Việt Nam thông qua Google Search (ưu tiên các trang như masothue.com). Hãy tìm Tên công ty đầy đủ bằng tiếng Việt (tên chính thức), Mã số thuế, và Địa chỉ công ty. Trả về đúng định dạng JSON: {"name": "Tên công ty tiếng Việt", "address": "Địa chỉ", "taxId": "Mã số thuế"}. Chỉ trả về duy nhất chuỗi JSON, không có code block hay nội dung thừa.`;
-    
-    // Utilize gemini with googleSearch tool to fetch real-time public data
-    const response = await aiClient.models.generateContent({
-      model: "gemini-2.5-flash",
-      contents: prompt,
-      config: {
-        tools: [{ googleSearch: {} }]
+
+      if (ddgRes.ok) {
+        const ddgHtml = await ddgRes.text();
+        const urlRegex = /uddg=(https%3A%2F%2Fmasothue\.com%2F[a-zA-Z0-9%\-_]+)/gi;
+        let match;
+        let matchedCompanyUrl = "";
+
+        while ((match = urlRegex.exec(ddgHtml)) !== null) {
+          const decoded = decodeURIComponent(match[1]);
+          if (decoded.includes("masothue.com/") && /\d{10}/.test(decoded)) {
+            matchedCompanyUrl = decoded;
+            break;
+          }
+        }
+
+        if (matchedCompanyUrl) {
+          console.log(`Scraper found URL slug: ${matchedCompanyUrl}`);
+          const companyRes = await fetch(matchedCompanyUrl, {
+            headers: {
+              "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36",
+              "Accept-Language": "vi,en-US;q=0.9,en;q=0.8",
+              "Accept": "text/html,application/xhtml+xml,application/xml;q=0.9,image/webp,*/*;q=0.8"
+            }
+          });
+
+          if (companyRes.ok) {
+            const pageHtml = await companyRes.text();
+            
+            // Extract taxID
+            let taxId = "";
+            const taxIdMatch = pageHtml.match(/itemprop="taxID"[^>]*>([^<]+)/i);
+            if (taxIdMatch) {
+              taxId = taxIdMatch[1].trim().replace(/<[^>]+>/g, '');
+            }
+            if (!taxId) {
+              const urlDigits = matchedCompanyUrl.match(/\/(\d{10}(\d{3})?)/);
+              if (urlDigits) {
+                taxId = urlDigits[1];
+              }
+            }
+
+            // Extract Name
+            let name = "";
+            const h1Match = pageHtml.match(/<h1[^>]*>([\s\S]*?)<\/h1>/i);
+            if (h1Match) {
+              name = h1Match[1].replace(/<[^>]+>/g, '').trim();
+              if (name.includes(" - ")) {
+                const parts = name.split(" - ");
+                if (parts[1]) name = parts[1].trim();
+              }
+            }
+            if (!name) {
+              const titleMatch = pageHtml.match(/<title>([^<]+)<\/title>/i);
+              if (titleMatch) {
+                name = titleMatch[1].trim();
+                if (name.includes(" - ")) {
+                  const parts = name.split(" - ");
+                  if (parts[1]) name = parts[1].trim();
+                }
+              }
+            }
+
+            // Extract Address
+            let address = "";
+            const addrMatch1 = pageHtml.match(/itemprop="address"[^>]*>([^<]+)/i);
+            if (addrMatch1) {
+              address = addrMatch1[1].trim().replace(/<[^>]+>/g, '');
+            }
+            if (!address) {
+              const addrMatch2 = pageHtml.match(/Địa chỉ Thuế<\/td>\s*<td[^>]*>([\s\S]*?)<\/td>/i);
+              if (addrMatch2) {
+                address = addrMatch2[1].trim().replace(/<[^>]+>/g, '');
+              }
+            }
+            if (!address) {
+              const addrMatch3 = pageHtml.match(/Địa chỉ<\/td>\s*<td[^>]*>([\s\S]*?)<\/td>/i);
+              if (addrMatch3) {
+                address = addrMatch3[1].trim().replace(/<[^>]+>/g, '');
+              }
+            }
+
+            if (taxId || address || name) {
+              responseData = {
+                name: name.replace(/\r?\n|\r/g, " ").trim(),
+                address: address.replace(/\r?\n|\r/g, " ").trim(),
+                taxId: taxId.trim()
+              };
+              scraperSuccess = true;
+              console.log("Scraped tax info successfully:", responseData);
+            }
+          }
+        }
       }
-    });
-    
-    let textInfo = response.text || "{}";
-    if (textInfo.includes('```json')) {
-      textInfo = textInfo.replace(/```json\n?/g, '').replace(/```/g, '');
+    } catch (scErr: any) {
+      console.warn("Direct HTML Scraper failed, falling back to Gemini text lookup:", scErr.message || scErr);
     }
-    const data = JSON.parse(textInfo);
-    res.json(data);
+
+    // 2. Fallback to standard Gemini text generation WITHOUT search grounding tools (zero search quota / zero 429 risk)
+    if (!scraperSuccess) {
+      const apiKey = process.env.GEMINI_API_KEY;
+      if (!apiKey) {
+        return res.status(500).json({
+          error: "GEMINI_API_KEY is not configured.",
+        });
+      }
+
+      console.log("Using Gemini standard fallback text parsing (no tools, zero risk of 429 quote limit error)...");
+      const aiClient = getGeminiClient();
+      const prompt = `Tra cứu thông tin danh nghiệp Việt Nam tên là "${query}". Hãy tìm và suy luận Mã Số Thuế (taxId) và Địa chỉ đầy đủ (address). Trả về duy nhất string JSON thuần túy có dạng: {"name": "Tên công ty tiếng Việt", "address": "Địa chỉ", "taxId": "Mã số thuế"}. Nếu không biết, hãy điền trống rỗng cho các trường đó. Không trả về thêm bất kỳ ký tự nào, không dùng code blocks \`\`\`json.`;
+
+      const response = await aiClient.models.generateContent({
+        model: "gemini-3.5-flash",
+        contents: prompt
+      });
+
+      let textInfo = response.text || "{}";
+      if (textInfo.includes('```json')) {
+        textInfo = textInfo.replace(/```json\n?/g, '').replace(/```/g, '');
+      }
+      responseData = JSON.parse(textInfo);
+    }
+
+    res.json(responseData);
   } catch (error: any) {
-    console.error("Error fetching company info:", error);
+    console.error("Error fetching company details:", error);
     res.status(500).json({ error: error.message });
   }
 });
@@ -513,9 +626,9 @@ app.post("/api/extract", async (req, res) => {
     };
 
     async function generateJsonWithFallback(contents: any) {
-      // Prioritize gemini-2.5-flash for maximum speed (often < 5s) to bypass Vercel's 10s limit
+      // Prioritize modern Gemini models with multi-model fallback to bypass high-demand 503 spikes or timeouts
       const isVercel = !!process.env.VERCEL;
-      const models = ["gemini-2.5-flash", "gemini-1.5-flash"];
+      const models = ["gemini-3.5-flash", "gemini-flash-latest", "gemini-3.1-flash-lite", "gemini-2.5-flash"];
       const maxAttempts = isVercel ? 1 : 2;
       let lastError: any = null;
 
