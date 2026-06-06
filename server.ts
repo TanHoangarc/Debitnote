@@ -334,6 +334,8 @@ function checkNameSimilarity(query: string, candidateName: string): boolean {
 }
 
 async function fetchVietQRCompany(taxId: string): Promise<{ name: string; taxId: string; address: string } | null> {
+  const isVercelEnv = !!process.env.VERCEL;
+  const lookupTimeout = isVercelEnv ? 2500 : 4500;
   try {
     const url = `https://api.vietqr.io/v2/business/${taxId}`;
     console.log(`[VietQR-Lookup] Querying tax ID: ${taxId}`);
@@ -342,7 +344,7 @@ async function fetchVietQRCompany(taxId: string): Promise<{ name: string; taxId:
         "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36",
         "Accept": "application/json"
       }
-    }, 4500);
+    }, lookupTimeout);
     if (res.ok) {
       const json = await res.json();
       if (json && json.data) {
@@ -360,6 +362,9 @@ async function fetchVietQRCompany(taxId: string): Promise<{ name: string; taxId:
 }
 
 async function scrapeExternalSearch(query: string): Promise<string> {
+  const isVercelEnv = !!process.env.VERCEL;
+  const scrapeTimeout = isVercelEnv ? 1500 : 5000;
+
   const userAgents = [
     "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36",
     "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/605.1.15 (KHTML, like Gecko) Version/17.1 Safari/605.1.15",
@@ -377,7 +382,7 @@ async function scrapeExternalSearch(query: string): Promise<string> {
         "Accept": "text/html,application/xhtml+xml,application/xml;q=0.9,image/webp,*/*;q=0.8",
         "Accept-Language": "vi,en-US;q=0.7,en;q=0.3"
       }
-    }, 5000);
+    }, scrapeTimeout);
 
     if (response.ok) {
       const html = await response.text();
@@ -402,7 +407,7 @@ async function scrapeExternalSearch(query: string): Promise<string> {
         "Accept": "text/html,application/xhtml+xml,application/xml;q=0.9,image/webp,*/*;q=0.8",
         "Accept-Language": "vi,en-US;q=0.7,en;q=0.3"
       }
-    }, 5000);
+    }, scrapeTimeout);
 
     if (response.ok) {
       const html = await response.text();
@@ -428,7 +433,7 @@ async function scrapeExternalSearch(query: string): Promise<string> {
         "Accept-Language": "vi,en-US;q=0.7,en;q=0.3",
         "Referer": "https://masothue.com/"
       }
-    }, 5000);
+    }, scrapeTimeout);
 
     if (response.ok) {
       const html = await response.text();
@@ -482,18 +487,29 @@ app.post("/api/search-company", async (req, res) => {
 
       console.log(`[Search-Company] Found ${uniqueCandidates.length} potential tax IDs in scraped content:`, uniqueCandidates);
 
-      // Verify each candidate on VietQR with strict business name matching
-      for (const candidate of uniqueCandidates.slice(0, 5)) {
-        const companyInfo = await fetchVietQRCompany(candidate);
-        if (companyInfo && companyInfo.name) {
-          const isSimilar = checkNameSimilarity(query, companyInfo.name);
-          if (isSimilar) {
-            console.log(`[Search-Company] Match found via scraper candidates:`, companyInfo);
-            return res.json(companyInfo);
-          } else {
-            console.log(`[Search-Company] Scraper candidate ${candidate} (${companyInfo.name}) did not match query "${query}".`);
+      // Verify candidates on VietQR in parallel to prevent high latency or timeout on Vercel
+      const candidatePromises = uniqueCandidates.slice(0, 5).map(async (candidate) => {
+        try {
+          const companyInfo = await fetchVietQRCompany(candidate);
+          if (companyInfo && companyInfo.name) {
+            const isSimilar = checkNameSimilarity(query, companyInfo.name);
+            if (isSimilar) {
+              return companyInfo;
+            } else {
+              console.log(`[Search-Company] Scraper candidate ${candidate} (${companyInfo.name}) did not match query "${query}".`);
+            }
           }
+        } catch (candidateErr) {
+          console.warn(`[Search-Company] Failed to verify candidate ${candidate}:`, candidateErr);
         }
+        return null;
+      });
+
+      const results = await Promise.all(candidatePromises);
+      const matchedInfo = results.find((r) => r !== null);
+      if (matchedInfo) {
+        console.log(`[Search-Company] Match found via scraper candidates:`, matchedInfo);
+        return res.json(matchedInfo);
       }
     }
 
