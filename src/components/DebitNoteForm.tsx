@@ -365,7 +365,16 @@ export default function DebitNoteForm({
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({ query: data.companyName })
       });
-      if (!res.ok) throw new Error("Thất bại khi liên hệ máy chủ tra cứu.");
+      if (!res.ok) {
+        let errorMessage = "Thất bại khi liên hệ máy chủ tra cứu.";
+        try {
+          const errJson = await res.json();
+          if (errJson && errJson.error) {
+            errorMessage = errJson.error;
+          }
+        } catch (_) {}
+        throw new Error(errorMessage);
+      }
       const info = await res.json();
       
       if (info.taxId || info.address) {
