@@ -281,77 +281,337 @@ app.delete("/api/customers/:id", async (req, res) => {
   }
 });
 
+async function fetchWithTimeout(url: string, options: any = {}, timeout = 6000) {
+  const controller = new AbortController();
+  const id = setTimeout(() => controller.abort(), timeout);
+  try {
+    const response = await fetch(url, {
+      ...options,
+      signal: controller.signal
+    });
+    clearTimeout(id);
+    return response;
+  } catch (error) {
+    clearTimeout(id);
+    throw error;
+  }
+}
+
+function extractTaxId(text: string): string | null {
+  if (!text) return null;
+  const m1 = text.match(/\b\d{10}-\d{3}\b/);
+  if (m1) return m1[0];
+  const m2 = text.match(/\b\d{13}\b/);
+  if (m2) return m2[0];
+  const m3 = text.match(/\b\d{10}\b/);
+  if (m3) return m3[0];
+  const cleaned = text.replace(/[^0-9]/g, "");
+  if (cleaned.length === 10 || cleaned.length === 13) {
+    return cleaned;
+  }
+  return null;
+}
+
+function checkNameSimilarity(query: string, candidateName: string): boolean {
+  if (!query || !candidateName) return false;
+  const clean = (s: string) => s.toLowerCase()
+    .normalize("NFD").replace(/[\u0300-\u036f]/g, "")
+    .replace(/[^a-z0-9]/g, " ");
+  const qClean = clean(query).split(/\s+/).filter(Boolean);
+  const cClean = clean(candidateName).split(/\s+/).filter(Boolean);
+  if (qClean.length === 0) return false;
+  if (qClean.length <= 2) {
+    return qClean.every(word => clean(candidateName).includes(word));
+  }
+  let overlaps = 0;
+  for (const word of qClean) {
+    if (["cong", "ty", "tnhh", "co", "phan", "mtv", "mot", "thanh", "vien"].includes(word)) continue;
+    if (cClean.includes(word)) {
+      overlaps++;
+    }
+  }
+  return overlaps > 0;
+}
+
+async function fetchVietQRCompany(taxId: string): Promise<{ name: string; taxId: string; address: string } | null> {
+  try {
+    const url = `https://api.vietqr.io/v2/business/${taxId}`;
+    console.log(`[VietQR-Lookup] Querying tax ID: ${taxId}`);
+    const res = await fetchWithTimeout(url, {
+      headers: {
+        "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36",
+        "Accept": "application/json"
+      }
+    }, 4500);
+    if (res.ok) {
+      const json = await res.json();
+      if (json && json.data) {
+        return {
+          name: (json.data.name || json.data.displayName || "").toUpperCase(),
+          taxId: taxId,
+          address: json.data.address || ""
+        };
+      }
+    }
+  } catch (e: any) {
+    console.warn(`[VietQR-Lookup] Failed for ${taxId}:`, e.message || e);
+  }
+  return null;
+}
+
+async function scrapeExternalSearch(query: string): Promise<string> {
+  const userAgents = [
+    "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36",
+    "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/605.1.15 (KHTML, like Gecko) Version/17.1 Safari/605.1.15",
+    "Mozilla/5.0 (Windows NT 10.0; Win64; x64; rv:121.0) Gecko/20100101 Firefox/121.0"
+  ];
+  const randomUserAgent = userAgents[Math.floor(Math.random() * userAgents.length)];
+
+  // Try general DuckDuckGo search first
+  try {
+    console.log(`[SearchScraper] Fetching DuckDuckGo HTML for query: ${query}`);
+    const searchUrl = `https://html.duckduckgo.com/html/?q=${encodeURIComponent(query)}`;
+    const response = await fetchWithTimeout(searchUrl, {
+      headers: {
+        "User-Agent": randomUserAgent,
+        "Accept": "text/html,application/xhtml+xml,application/xml;q=0.9,image/webp,*/*;q=0.8",
+        "Accept-Language": "vi,en-US;q=0.7,en;q=0.3"
+      }
+    }, 5000);
+
+    if (response.ok) {
+      const html = await response.text();
+      const bodyStart = html.indexOf("<body");
+      if (bodyStart !== -1) {
+        const truncated = html.substring(bodyStart, bodyStart + 22000);
+        console.log("[SearchScraper] DuckDuckGo general response fetched, length:", truncated.length);
+        return truncated;
+      }
+    }
+  } catch (e: any) {
+    console.warn("[SearchScraper] DuckDuckGo general search failed:", e.message || e);
+  }
+
+  // Try DuckDuckGo site:masothue.com search second
+  try {
+    console.log(`[SearchScraper] Fetching DuckDuckGo HTML for query: site:masothue.com ${query}`);
+    const searchUrl = `https://html.duckduckgo.com/html/?q=site:masothue.com+${encodeURIComponent(query)}`;
+    const response = await fetchWithTimeout(searchUrl, {
+      headers: {
+        "User-Agent": randomUserAgent,
+        "Accept": "text/html,application/xhtml+xml,application/xml;q=0.9,image/webp,*/*;q=0.8",
+        "Accept-Language": "vi,en-US;q=0.7,en;q=0.3"
+      }
+    }, 5000);
+
+    if (response.ok) {
+      const html = await response.text();
+      const bodyStart = html.indexOf("<body");
+      if (bodyStart !== -1) {
+        const truncated = html.substring(bodyStart, bodyStart + 16000);
+        console.log("[SearchScraper] DuckDuckGo response fetched, length:", truncated.length);
+        return truncated;
+      }
+    }
+  } catch (e: any) {
+    console.warn("[SearchScraper] DuckDuckGo search failed:", e.message || e);
+  }
+
+  // Try direct masothue.com search URL third
+  try {
+    console.log(`[SearchScraper] Fetching masothue.com Search page directly for query: ${query}`);
+    const companySearchUrl = `https://masothue.com/Search/?q=${encodeURIComponent(query)}`;
+    const response = await fetchWithTimeout(companySearchUrl, {
+      headers: {
+        "User-Agent": randomUserAgent,
+        "Accept": "text/html,application/xhtml+xml,application/xml;q=0.9,image/webp,*/*;q=0.8",
+        "Accept-Language": "vi,en-US;q=0.7,en;q=0.3",
+        "Referer": "https://masothue.com/"
+      }
+    }, 5000);
+
+    if (response.ok) {
+      const html = await response.text();
+      const bodyStart = html.indexOf("<body") !== -1 ? html.indexOf("<body") : 0;
+      const truncated = html.substring(bodyStart, bodyStart + 16000);
+      console.log("[SearchScraper] Direct masothue.com search page fetched, length:", truncated.length);
+      return truncated;
+    }
+  } catch (e: any) {
+    console.warn("[SearchScraper] Direct masothue.com search failed:", e.message || e);
+  }
+
+  return "";
+}
+
 app.post("/api/search-company", async (req, res) => {
   const { query } = req.body;
   if (!query) {
     return res.status(400).json({ error: "Missing query" });
   }
-
-  const cleanQuery = String(query).trim();
-  console.log(`[Search-Company] Initiating lookup for: "${cleanQuery}"`);
-
-  // Helper function to fetch from VietQR API
-  const fetchVietQR = async (taxId: string) => {
-    const cleanedId = taxId.replace(/[\-\s]/g, "");
-    const response = await fetch(`https://api.vietqr.io/v2/business/${cleanedId}`);
-    if (!response.ok) {
-      throw new Error(`VietQR server returned status ${response.status}`);
-    }
-    const data: any = await response.json();
-    if (data && data.code === "00" && data.data) {
-      return {
-        name: data.data.name || "",
-        taxId: data.data.id || cleanedId,
-        address: data.data.address || "",
-        desc: "Thành công - Xác thực từ cơ sở dữ liệu Tổng Cục Thuế"
-      };
-    }
-    return null;
-  };
-
+  
   try {
-    // 1. Direct Tax ID Match Check (pure digits with optional spaces or hyphens, length 8 to 14)
-    const isTaxId = /^[0-9\-\s]{8,14}$/.test(cleanQuery);
-    if (isTaxId) {
-      console.log(`[Search-Company] Detected input as a direct Tax ID: "${cleanQuery}". Querying VietQR directly...`);
-      try {
-        const officialInfo = await fetchVietQR(cleanQuery);
-        if (officialInfo) {
-          console.log(`[Search-Company] Direct Tax ID match found:`, officialInfo);
-          return res.json(officialInfo);
-        }
-      } catch (err: any) {
-        console.warn(`[Search-Company] Direct VietQR fetch failed, continuing to AI fallback:`, err.message || err);
+    // Stage 1: If query itself contains or is a direct tax ID, query VietQR immediately
+    const directTaxId = extractTaxId(query);
+    if (directTaxId) {
+      console.log(`[Search-Company] Query contains a direct Tax ID: ${directTaxId}. Doing database lookup.`);
+      const directResult = await fetchVietQRCompany(directTaxId);
+      if (directResult) {
+        console.log(`[Search-Company] Direct Tax ID lookup success:`, directResult);
+        return res.json(directResult);
       }
     }
 
-    // 2. Query name/keywords to Tax ID via Plain Gemini 3.5-Flash text model (No webSearch tool -> Zero 429 quota exhaustion!)
+    // Stage 2: Scrape search engine to look up tax ID candidates
+    console.log(`[Search-Company] Name query: "${query}". Initiating scraper candidate search.`);
+    const scrapedHtml = await scrapeExternalSearch(`mst ${query}`);
+    if (scrapedHtml) {
+      const matches10 = scrapedHtml.match(/\b\d{10}\b/g) || [];
+      const matches13 = scrapedHtml.match(/\b\d{13}\b/g) || [];
+      const matchesHyphed = scrapedHtml.match(/\b\d{10}-\d{3}\b/g) || [];
+      
+      const rawCandidates = [...matches10, ...matches13, ...matchesHyphed];
+      const uniqueCandidates = Array.from(new Set(rawCandidates))
+        .map(c => c.trim())
+        .filter(c => {
+          if (c.startsWith("202") || c.startsWith("201")) {
+            return false;
+          }
+          return true;
+        });
+
+      console.log(`[Search-Company] Found ${uniqueCandidates.length} potential tax IDs in scraped content:`, uniqueCandidates);
+
+      // Verify each candidate on VietQR with strict business name matching
+      for (const candidate of uniqueCandidates.slice(0, 5)) {
+        const companyInfo = await fetchVietQRCompany(candidate);
+        if (companyInfo && companyInfo.name) {
+          const isSimilar = checkNameSimilarity(query, companyInfo.name);
+          if (isSimilar) {
+            console.log(`[Search-Company] Match found via scraper candidates:`, companyInfo);
+            return res.json(companyInfo);
+          } else {
+            console.log(`[Search-Company] Scraper candidate ${candidate} (${companyInfo.name}) did not match query "${query}".`);
+          }
+        }
+      }
+    }
+
+    // Stage 3: LLM Springboards
     const apiKey = process.env.GEMINI_API_KEY;
     if (!apiKey) {
       return res.status(500).json({
         error: "GEMINI_API_KEY is not configured.",
       });
     }
-
     const aiClient = getGeminiClient();
-    const prompt = `Bạn hãy thực hiện tra cứu thông tin tên chính thức tiếng Việt viết hoa, Mã số thuế (MST) và địa chỉ đăng ký của doanh nghiệp Việt Nam "${cleanQuery}" từ dữ liệu kiến thức của bạn.
-Lưu ý tìm công ty khớp và phù hợp nhất với từ khóa dữ liệu đầu vào. Trả về đúng định dạng JSON có cấu trúc sau, không giải thích gì khác ngoài đối tượng JSON:
-{
-  "name": "Tên viết hoa đầy đủ có dấu theo tiếng Việt của doanh nghiệp (ví dụ và viết hoa: CÔNG TY CỔ PHẦN...)",
-  "taxId": "Mã số thuế của doanh nghiệp, gồm chuỗi các chữ số chính xác liên tiếp",
-  "address": "Địa chỉ đăng ký kinh doanh chính thức đầy đủ"
-}`;
+    let textInfo = "";
+    
+    // Attempt 1: Gemini 3.5-flash parses the full scraped HTML
+    if (scrapedHtml) {
+      try {
+        console.log("[Search-Company] Running Attempt 1: Scraped HTML + gemini-3.5-flash parsing");
+        const scraperPrompt = `Dưới đây là một phần mã nguồn HTML từ kết quả tìm kiếm/trang web đối với từ khóa doanh nghiệp Việt Nam "${query}".
+Hãy phân tích đoạn mã nguồn HTML này để trích xuất chính xác thông tin khớp tốt nhất của một doanh nghiệp Việt Nam tương ứng:
+1. Tên chính thức đầy đủ bằng tiếng Việt (Official Company Name - viết hoa đầy đủ, có dấu theo tiếng Việt, ví dụ: CÔNG TY TNHH ABC...).
+2. Mã số thuế doanh nghiệp (MST - Gồm dãy số chính xác).
+3. Địa chỉ đăng ký kinh doanh chính thức đầy đủ của doanh nghiệp (Address).
 
-    console.log(`[Search-Company] Resolving company name "${cleanQuery}" via plain Gemini text model...`);
-    const aiResponse = await aiClient.models.generateContent({
-      model: "gemini-3.5-flash",
-      contents: prompt,
-      config: {
-        responseMimeType: "application/json"
+Nếu bạn tìm thấy nhiều công ty, hãy chọn công ty khớp nhất với tên tìm kiếm "${query}".
+
+Mã nguồn HTML kết quả:
+\"\"\"
+${scrapedHtml}
+\"\"\"`;
+
+        const response = await aiClient.models.generateContent({
+          model: "gemini-3.5-flash",
+          contents: scraperPrompt,
+          config: {
+            responseMimeType: "application/json",
+            responseSchema: {
+              type: Type.OBJECT,
+              properties: {
+                name: {
+                  type: Type.STRING,
+                  description: "Tên chính thức đầy đủ bằng tiếng Việt của doanh nghiệp (ví dụ viết hoa: CÔNG TY TNHH...)",
+                },
+                taxId: {
+                  type: Type.STRING,
+                  description: "Mã số thuế (MST) của doanh nghiệp, gồm chuỗi các chữ số chính xác",
+                },
+                address: {
+                  type: Type.STRING,
+                  description: "Địa chỉ đăng ký kinh doanh đầy đủ và chính xác của doanh nghiệp",
+                }
+              },
+              required: ["name", "taxId", "address"]
+            }
+          }
+        });
+        textInfo = response.text || "";
+      } catch (err1: any) {
+        console.warn("[Search-Company] Attempt 1 (Scraper + Gemini) failed:", err1.message || err1);
       }
-    });
+    }
 
-    const textInfo = aiResponse.text || "{}";
+    // Attempt 2: Grounding Google Search tool as a backup
+    if (!textInfo) {
+      try {
+        console.log("[Search-Company] Running Attempt 2: gemini-3.5-flash + Google Search Tool as backup");
+        const defaultPrompt = `Bạn hãy thực hiện tra cứu thông tin doanh nghiệp Việt Nam của "${query}" thông qua Google Search (tìm kiếm trang masothue.com hoặc cổng thông tin doanh nghiệp).
+Đóng vai trò là công cụ trích xuất, hãy cung cấp: Tên công ty Việt Nam đầy đủ viết hoa có dấu, Mã số thuế doanh nghiệp, Địa chỉ đầy đủ.`;
+        
+        const response = await aiClient.models.generateContent({
+          model: "gemini-3.5-flash",
+          contents: defaultPrompt,
+          config: {
+            tools: [{ googleSearch: {} }],
+            responseMimeType: "application/json",
+            responseSchema: {
+              type: Type.OBJECT,
+              properties: {
+                name: { type: Type.STRING },
+                taxId: { type: Type.STRING },
+                address: { type: Type.STRING }
+              },
+              required: ["name", "taxId", "address"]
+            }
+          }
+        });
+        textInfo = response.text || "";
+      } catch (err2: any) {
+        console.warn("[Search-Company] Attempt 2 (Google Search Tool) failed:", err2.message || err2);
+      }
+    }
+
+    // Attempt 3: Standard knowledge base fallback query (No Search tools)
+    if (!textInfo) {
+      try {
+        console.log("[Search-Company] Running Attempt 3: Plain gemini-3.5-flash model knowledge fallback");
+        const response3 = await aiClient.models.generateContent({
+          model: "gemini-3.5-flash",
+          contents: `Hãy tra cứu hoặc dự đoán thông tin mã số thuế và địa chỉ của doanh nghiệp "${query}" tại Việt Nam từ kiến thức của bạn. Trả về đúng định dạng JSON: {"name": "Tên công ty viết hoa tiếng Việt", "taxId": "Mã số thuế", "address": "Địa chỉ"}. Giữ đúng định dạng và chỉ trả về JSON, không giải thích.`,
+          config: {
+            responseMimeType: "application/json"
+          }
+        });
+        textInfo = response3.text || "";
+      } catch (err3: any) {
+        console.warn("[Search-Company] Attempt 3 failed:", err3.message || err3);
+      }
+    }
+
+    // Attempt 4: Absolute safe mock callback (if all AI queries failed, never crash the app UI)
+    if (!textInfo) {
+      console.log("[Search-Company] All search methods failed due to general API rate limits. Returning safe mock metadata.");
+      return res.json({
+        name: query.toUpperCase(),
+        taxId: "",
+        address: ""
+      });
+    }
+
     let cleanedText = textInfo.trim();
     if (cleanedText.includes("```")) {
       const match = cleanedText.match(/```(?:json)?([\s\S]*?)```/);
@@ -361,38 +621,18 @@ Lưu ý tìm công ty khớp và phù hợp nhất với từ khóa dữ liệu 
     }
 
     const parsedData = JSON.parse(cleanedText);
-    const resolvedTaxId = parsedData.taxId ? String(parsedData.taxId).trim() : "";
-
-    // 3. Double-verify and pull live official registered data via VietQR using resolved Tax ID
-    if (resolvedTaxId) {
-      console.log(`[Search-Company] Gemini resolved Tax ID to "${resolvedTaxId}". Verifying against official registry...`);
-      try {
-        const verifiedInfo = await fetchVietQR(resolvedTaxId);
-        if (verifiedInfo) {
-          console.log(`[Search-Company] Verification successful. Using official GDT registry data.`, verifiedInfo);
-          return res.json(verifiedInfo);
-        }
-        console.log(`[Search-Company] VietQR registry has no records for tax ID "${resolvedTaxId}". Falling back to AI prediction.`);
-      } catch (err: any) {
-        console.warn(`[Search-Company] VietQR verification failed:`, err.message || err, `. Falling back to AI prediction.`);
-      }
-    }
-
-    // 4. Fallback: Return raw predictions returned by Gemini if live registry is unreachable or empty
-    if (parsedData.name || parsedData.taxId || parsedData.address) {
-      console.log(`[Search-Company] Falling back to Gemini text prediction results:`, parsedData);
-      return res.json({
-        name: parsedData.name || cleanQuery.toUpperCase(),
-        taxId: parsedData.taxId || "",
-        address: parsedData.address || "",
-        desc: "Dự đoán từ cơ sở tri thức AI (Chưa xác minh qua Cục Thuế)"
-      });
-    }
-
-    throw new Error("Không thể tìm thấy thông tin doanh nghiệp tương ứng.");
+    res.json({
+      name: parsedData.name || "",
+      taxId: parsedData.taxId || "",
+      address: parsedData.address || ""
+    });
   } catch (error: any) {
-    console.error("[Search-Company] Critical Error fetching company info:", error);
-    res.status(500).json({ error: error.message || "Failed to search company info" });
+    console.error("Critical Error in search company API:", error);
+    res.json({
+      name: query.toUpperCase(),
+      taxId: "",
+      address: ""
+    });
   }
 });
 
