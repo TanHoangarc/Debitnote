@@ -286,88 +286,72 @@ app.post("/api/search-company", async (req, res) => {
   if (!query) {
     return res.status(400).json({ error: "Missing query" });
   }
+
+  const cleanQuery = String(query).trim();
+  console.log(`[Search-Company] Initiating lookup for: "${cleanQuery}"`);
+
+  // Helper function to fetch from VietQR API
+  const fetchVietQR = async (taxId: string) => {
+    const cleanedId = taxId.replace(/[\-\s]/g, "");
+    const response = await fetch(`https://api.vietqr.io/v2/business/${cleanedId}`);
+    if (!response.ok) {
+      throw new Error(`VietQR server returned status ${response.status}`);
+    }
+    const data: any = await response.json();
+    if (data && data.code === "00" && data.data) {
+      return {
+        name: data.data.name || "",
+        taxId: data.data.id || cleanedId,
+        address: data.data.address || "",
+        desc: "Thành công - Xác thực từ cơ sở dữ liệu Tổng Cục Thuế"
+      };
+    }
+    return null;
+  };
+
   try {
+    // 1. Direct Tax ID Match Check (pure digits with optional spaces or hyphens, length 8 to 14)
+    const isTaxId = /^[0-9\-\s]{8,14}$/.test(cleanQuery);
+    if (isTaxId) {
+      console.log(`[Search-Company] Detected input as a direct Tax ID: "${cleanQuery}". Querying VietQR directly...`);
+      try {
+        const officialInfo = await fetchVietQR(cleanQuery);
+        if (officialInfo) {
+          console.log(`[Search-Company] Direct Tax ID match found:`, officialInfo);
+          return res.json(officialInfo);
+        }
+      } catch (err: any) {
+        console.warn(`[Search-Company] Direct VietQR fetch failed, continuing to AI fallback:`, err.message || err);
+      }
+    }
+
+    // 2. Query name/keywords to Tax ID via Plain Gemini 3.5-Flash text model (No webSearch tool -> Zero 429 quota exhaustion!)
     const apiKey = process.env.GEMINI_API_KEY;
     if (!apiKey) {
       return res.status(500).json({
         error: "GEMINI_API_KEY is not configured.",
       });
     }
+
     const aiClient = getGeminiClient();
-    const prompt = `Bạn hãy thực hiện tra cứu thông tin doanh nghiệp Việt Nam của "${query}" thông qua Google Search (tìm kiếm trang masothue.com hoặc cổng thông tin doanh nghiệp).
-Dựa trên các thông tin tìm kiếm được, hãy trích xuất chính xác cấu trúc thông tin của doanh nghiệp đó:
-1. Tên công ty đầy đủ bằng tiếng Việt (Official Company Name in Vietnamese - viết hoa đầy đủ có dấu theo tiếng Việt).
-2. Mã số thuế (MST - Tax ID).
-3. Địa chỉ trụ sở đăng ký kinh doanh chính thức đầy đủ (Address).
+    const prompt = `Bạn hãy thực hiện tra cứu thông tin tên chính thức tiếng Việt viết hoa, Mã số thuế (MST) và địa chỉ đăng ký của doanh nghiệp Việt Nam "${cleanQuery}" từ dữ liệu kiến thức của bạn.
+Lưu ý tìm công ty khớp và phù hợp nhất với từ khóa dữ liệu đầu vào. Trả về đúng định dạng JSON có cấu trúc sau, không giải thích gì khác ngoài đối tượng JSON:
+{
+  "name": "Tên viết hoa đầy đủ có dấu theo tiếng Việt của doanh nghiệp (ví dụ và viết hoa: CÔNG TY CỔ PHẦN...)",
+  "taxId": "Mã số thuế của doanh nghiệp, gồm chuỗi các chữ số chính xác liên tiếp",
+  "address": "Địa chỉ đăng ký kinh doanh chính thức đầy đủ"
+}`;
 
-Luôn tìm công ty khớp và phù hợp nhất với dữ liệu đầu vào "${query}". Trả về dữ liệu chính xác dưới dạng đối tượng JSON có các thuộc tính: name, taxId, address.`;
-    
-    let textInfo = "";
-    
-    // Attempt 1: Gemini 3.5-flash with Google Search and strict response schema
-    try {
-      console.log("[Search-Company] Running Attempt 1: gemini-3.5-flash + Google Search + responseSchema");
-      const response = await aiClient.models.generateContent({
-        model: "gemini-3.5-flash",
-        contents: prompt,
-        config: {
-          tools: [{ googleSearch: {} }],
-          responseMimeType: "application/json",
-          responseSchema: {
-            type: Type.OBJECT,
-            properties: {
-              name: {
-                type: Type.STRING,
-                description: "Tên chính thức đầy đủ bằng tiếng Việt của doanh nghiệp (ví dụ và viết hoa: CÔNG TY TNHH...)",
-              },
-              taxId: {
-                type: Type.STRING,
-                description: "Mã số thuế (MST) của doanh nghiệp, gồm chuỗi các chữ số chính xác",
-              },
-              address: {
-                type: Type.STRING,
-                description: "Địa chỉ đăng ký kinh doanh đầy đủ và chính xác của doanh nghiệp",
-              }
-            },
-            required: ["name", "taxId", "address"]
-          }
-        }
-      });
-      textInfo = response.text || "";
-    } catch (err1: any) {
-      console.warn("[Search-Company] Attempt 1 failed:", err1.message || err1);
-      
-      // Attempt 2: Gemini 3.5-flash with Google Search but WITHOUT responseSchema
-      try {
-        console.log("[Search-Company] Running Attempt 2: gemini-3.5-flash + Google Search without strict schema");
-        const response2 = await aiClient.models.generateContent({
-          model: "gemini-3.5-flash",
-          contents: prompt + "\nLƯU Ý: Trả về duy nhất đối tượng JSON, ví dụ: {\"name\": \"...\", \"taxId\": \"...\", \"address\": \"...\"}",
-          config: {
-            tools: [{ googleSearch: {} }]
-          }
-        });
-        textInfo = response2.text || "";
-      } catch (err2: any) {
-        console.warn("[Search-Company] Attempt 2 failed:", err2.message || err2);
-        
-        // Attempt 3: Standard Gemini 3.5-flash text model query without search tools
-        console.log("[Search-Company] Running Attempt 3: Plain gemini-3.5-flash query fallback");
-        const response3 = await aiClient.models.generateContent({
-          model: "gemini-3.5-flash",
-          contents: `Hãy tra cứu hoặc dự đoán thông tin mã số thuế và địa chỉ của doanh nghiệp "${query}" tại Việt Nam từ kiến thức của bạn. Trả về đúng định dạng JSON: {"name": "Tên công ty viết hoa tiếng Việt", "taxId": "Mã số thuế", "address": "Địa chỉ"}. Giữ đúng định dạng và chỉ trả về JSON, không giải thích.`,
-          config: {
-            responseMimeType: "application/json"
-          }
-        });
-        textInfo = response3.text || "";
+    console.log(`[Search-Company] Resolving company name "${cleanQuery}" via plain Gemini text model...`);
+    const aiResponse = await aiClient.models.generateContent({
+      model: "gemini-3.5-flash",
+      contents: prompt,
+      config: {
+        responseMimeType: "application/json"
       }
-    }
+    });
 
-    if (!textInfo) {
-      throw new Error("Không thể lấy kết quả tra cứu từ máy chủ AI.");
-    }
-
+    const textInfo = aiResponse.text || "{}";
     let cleanedText = textInfo.trim();
     if (cleanedText.includes("```")) {
       const match = cleanedText.match(/```(?:json)?([\s\S]*?)```/);
@@ -377,13 +361,37 @@ Luôn tìm công ty khớp và phù hợp nhất với dữ liệu đầu vào "
     }
 
     const parsedData = JSON.parse(cleanedText);
-    res.json({
-      name: parsedData.name || "",
-      taxId: parsedData.taxId || "",
-      address: parsedData.address || ""
-    });
+    const resolvedTaxId = parsedData.taxId ? String(parsedData.taxId).trim() : "";
+
+    // 3. Double-verify and pull live official registered data via VietQR using resolved Tax ID
+    if (resolvedTaxId) {
+      console.log(`[Search-Company] Gemini resolved Tax ID to "${resolvedTaxId}". Verifying against official registry...`);
+      try {
+        const verifiedInfo = await fetchVietQR(resolvedTaxId);
+        if (verifiedInfo) {
+          console.log(`[Search-Company] Verification successful. Using official GDT registry data.`, verifiedInfo);
+          return res.json(verifiedInfo);
+        }
+        console.log(`[Search-Company] VietQR registry has no records for tax ID "${resolvedTaxId}". Falling back to AI prediction.`);
+      } catch (err: any) {
+        console.warn(`[Search-Company] VietQR verification failed:`, err.message || err, `. Falling back to AI prediction.`);
+      }
+    }
+
+    // 4. Fallback: Return raw predictions returned by Gemini if live registry is unreachable or empty
+    if (parsedData.name || parsedData.taxId || parsedData.address) {
+      console.log(`[Search-Company] Falling back to Gemini text prediction results:`, parsedData);
+      return res.json({
+        name: parsedData.name || cleanQuery.toUpperCase(),
+        taxId: parsedData.taxId || "",
+        address: parsedData.address || "",
+        desc: "Dự đoán từ cơ sở tri thức AI (Chưa xác minh qua Cục Thuế)"
+      });
+    }
+
+    throw new Error("Không thể tìm thấy thông tin doanh nghiệp tương ứng.");
   } catch (error: any) {
-    console.error("Error fetching company info:", error);
+    console.error("[Search-Company] Critical Error fetching company info:", error);
     res.status(500).json({ error: error.message || "Failed to search company info" });
   }
 });
