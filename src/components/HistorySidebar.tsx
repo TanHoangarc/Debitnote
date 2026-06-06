@@ -1,6 +1,6 @@
 import React from "react";
 import { DebitNote } from "../types";
-import { FileText, Trash2, History, Database, Search } from "lucide-react";
+import { FileText, Trash2, History, Database, Search, Download } from "lucide-react";
 
 interface HistorySidebarProps {
   history: DebitNote[];
@@ -59,11 +59,99 @@ export default function HistorySidebar({ history, onSelect, onDelete, activeId }
     return new Intl.NumberFormat("vi-VN", { style: "currency", currency: "VND" }).format(num);
   };
 
+  const handleExportAllHistoryCSV = () => {
+    if (history.length === 0) {
+      alert("Không có dữ liệu lịch sử để xuất!");
+      return;
+    }
+
+    const rows: any[][] = [
+      [
+        "Mã Debit Note",
+        "Ngày tạo",
+        "Tên khách hàng",
+        "Mã số thuế",
+        "Địa chỉ",
+        "Số Job",
+        "Hãng tàu/Đại lý",
+        "Ngày ETD/ETA",
+        "HBL/MBL",
+        "Cảng xếp POL",
+        "Cảng dỡ POD",
+        "Volume",
+        "ROE (Tỷ giá)",
+        "Ghi chú",
+        "Tổng tiền tạm tính (VND)",
+        "Số lượng khoản phí"
+      ]
+    ];
+
+    history.forEach((item) => {
+      let totalVnd = 0;
+      item.charges.forEach((charge) => {
+        const qty = Number(charge.qty) || 0;
+        const price = Number(charge.price) || 0;
+        const vat = Number(charge.vatPercent) || 0;
+        const inclVat = qty * price * (1 + vat / 100);
+
+        let chargeVnd = 0;
+        if (charge.currency === "USD") {
+          chargeVnd = inclVat * (Number(item.roe) || 25000);
+        } else {
+          chargeVnd = inclVat;
+        }
+        totalVnd += chargeVnd;
+      });
+
+      rows.push([
+        item.id,
+        item.createdAt ? new Date(item.createdAt).toLocaleString("vi-VN") : "",
+        item.companyName,
+        item.taxId || "",
+        item.address || "",
+        item.jobNo || "",
+        item.carrierAgent || "",
+        item.etdEta || "",
+        item.hblMbl || "",
+        item.pol || "",
+        item.pod || "",
+        item.volume || "",
+        item.roe || "0",
+        item.note || "",
+        Math.round(totalVnd),
+        item.charges.length
+      ]);
+    });
+
+    const csvContent = "\uFEFF" + rows.map(r => r.map(col => `"${String(col).replace(/"/g, '""')}"`).join(",")).join("\n");
+    const blob = new Blob([csvContent], { type: "text/csv;charset=utf-8;" });
+    const url = URL.createObjectURL(blob);
+    const link = document.createElement("a");
+    link.setAttribute("href", url);
+    link.setAttribute("download", `BaoCao_LichSu_DebitNote_${new Date().toISOString().substring(0, 10)}.csv`);
+    document.body.appendChild(link);
+    link.click();
+    document.body.removeChild(link);
+  };
+
   return (
     <div className="bg-white rounded-lg border border-slate-200 p-4 h-full flex flex-col shadow-sm">
-      <h3 className="font-bold text-slate-700 flex items-center gap-2 pb-3 border-b border-slate-100">
-        <History size={18} className="text-emerald-600" />
-        Lịch sử lưu trữ ( {history.length} )
+      <h3 className="font-bold text-slate-700 flex items-center justify-between pb-3 border-b border-slate-100 select-none">
+        <div className="flex items-center gap-1.5 min-w-0">
+          <History size={18} className="text-emerald-600 shrink-0" />
+          <span className="truncate">Lịch sử ( {history.length} )</span>
+        </div>
+        {history.length > 0 && (
+          <button
+            type="button"
+            onClick={handleExportAllHistoryCSV}
+            className="text-[10px] text-emerald-600 font-bold border border-emerald-300 rounded px-1.5 py-0.5 bg-emerald-50 hover:bg-emerald-100 transition cursor-pointer flex items-center gap-1 shrink-0"
+            title="Xuất danh mục báo cáo tất cả hóa đơn ra file Excel/CSV"
+          >
+            <Download size={11} />
+            Xuất Excel
+          </button>
+        )}
       </h3>
 
       {/* Search Input Filter */}

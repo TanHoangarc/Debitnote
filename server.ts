@@ -281,8 +281,11 @@ app.delete("/api/customers/:id", async (req, res) => {
   }
 });
 
-app.get("/api/masothue/:taxId", async (req, res) => {
-  const { taxId } = req.params;
+app.post("/api/search-company", express.json(), async (req, res) => {
+  const { query } = req.body;
+  if (!query) {
+    return res.status(400).json({ error: "Missing query" });
+  }
   try {
     const apiKey = process.env.GEMINI_API_KEY;
     if (!apiKey) {
@@ -291,15 +294,39 @@ app.get("/api/masothue/:taxId", async (req, res) => {
       });
     }
     const aiClient = getGeminiClient();
-    const prompt = `Tra cứu mã số thuế doanh nghiệp "${taxId}" tại Việt Nam thông qua Google Search. Hãy tìm Tên công ty đầy đủ bằng tiếng Việt (ưu tiên tên tiếng Việt chính thức, nếu không có thì lấy tên tiếng Anh) và Địa chỉ công ty khớp với mã số thuế này trên các trang tra cứu doanh nghiệp (ví dụ masothue.com). Trả về đúng định dạng JSON: {"name": "Tên công ty", "address": "Địa chỉ", "taxId": "${taxId}"}. Chỉ trả về duy nhất chuỗi JSON, không có code block hay nội dung thừa.`;
+    const prompt = `Bạn hãy thực hiện tra cứu Google Search với từ khóa tìm kiếm: "site:masothue.com ${query}" để tìm liên kết và thông tin của công ty có nội dung khớp nhất trên trang web tra cứu mã số thuế doanh nghiệp Việt Nam https://masothue.com/.
+Dựa trên các thông tin tìm kiếm được (từ các đoạn snippet mô tả hoặc chính nội dung trang kết quả), hãy trích xuất chính xác cấu trúc thông tin của doanh nghiệp đó:
+1. Tên công ty đầy đủ bằng tiếng Việt (Official Company Name in Vietnamese - viết hoa đầy đủ có dấu theo tiếng Việt).
+2. Mã số thuế (MST - Tax ID).
+3. Địa chỉ trụ sở đăng ký kinh doanh chính thức (Address).
+
+Luôn tìm công ty khớp và phù hợp nhất với dữ liệu đầu vào "${query}". Trả về dữ liệu chính xác dưới dạng đối tượng JSON.`;
     
-    // Utilize gemini with googleSearch tool to fetch real-time public data
+    // Utilize gemini-3.5-flash with googleSearch tool & structured response schema
     const response = await aiClient.models.generateContent({
-      model: "gemini-2.5-flash",
+      model: "gemini-3.5-flash",
       contents: prompt,
       config: {
         tools: [{ googleSearch: {} }],
-        responseMimeType: "application/json"
+        responseMimeType: "application/json",
+        responseSchema: {
+          type: Type.OBJECT,
+          properties: {
+            name: {
+              type: Type.STRING,
+              description: "Tên chính thức đầy đủ bằng tiếng Việt của doanh nghiệp (ví dụ và viết hoa: CÔNG TY TNHH...)",
+            },
+            taxId: {
+              type: Type.STRING,
+              description: "Mã số thuế (MST) của doanh nghiệp, gồm chuỗi các chữ số chính xác",
+            },
+            address: {
+              type: Type.STRING,
+              description: "Địa chỉ đăng ký kinh doanh đầy đủ và chính xác của doanh nghiệp",
+            }
+          },
+          required: ["name", "taxId", "address"]
+        }
       }
     });
     
@@ -307,7 +334,7 @@ app.get("/api/masothue/:taxId", async (req, res) => {
     const data = JSON.parse(textInfo);
     res.json(data);
   } catch (error: any) {
-    console.error("Error fetching tax info:", error);
+    console.error("Error fetching company info:", error);
     res.status(500).json({ error: error.message });
   }
 });

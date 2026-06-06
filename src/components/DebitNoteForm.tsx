@@ -1,6 +1,6 @@
 import React, { useState } from "react";
 import { DebitNote, ChargeItem, Customer, Fee } from "../types";
-import { Calendar, Plus, Trash2, Save, Sparkles, RefreshCw, Layers, CheckSquare, Square, Eye, X, ChevronLeft, ChevronRight } from "lucide-react";
+import { Calendar, Plus, Trash2, Save, Sparkles, RefreshCw, Layers, CheckSquare, Square, Eye, X, ChevronLeft, ChevronRight, Download } from "lucide-react";
 
 interface DebitNoteFormProps {
   data: DebitNote;
@@ -353,26 +353,31 @@ export default function DebitNoteForm({
     });
   };
 
-  const handleSearchTaxCode = async () => {
-    if (!data.taxId) {
-      alert("Vui lòng nhập Mã số thuế trước khi tra cứu.");
+  const handleSearchCompanyDetails = async () => {
+    if (!data.companyName) {
+      alert("Vui lòng nhập Tên công ty trước khi tra cứu.");
       return;
     }
     setIsSearchingTax(true);
     try {
-      const res = await fetch(`/api/masothue/${data.taxId}`);
+      const res = await fetch(`/api/search-company`, {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ query: data.companyName })
+      });
       if (!res.ok) throw new Error("Thất bại khi liên hệ máy chủ tra cứu.");
       const info = await res.json();
       
-      if (info.name || info.address) {
+      if (info.taxId || info.address) {
         onChange({
           ...data,
           companyName: info.name || data.companyName,
+          taxId: info.taxId || data.taxId,
           address: info.address || data.address
         });
-        alert(`Đã tìm thấy thông tin công ty: \n${info.name}\n${info.address}`);
+        alert(`Đã tìm thấy thông tin công ty: \n${info.name || "-"}\nMST: ${info.taxId || "-"}\nĐịa chỉ: ${info.address || "-"}`);
       } else {
-         alert("Không tìm thấy thông tin trên mạng hoặc mã số thuế chưa đúng.");
+         alert("Không tìm thấy thông tin trên mạng, hãy kiểm tra lại tên công ty.");
       }
     } catch (e: any) {
       alert("Tra cứu thất bại: " + e.message);
@@ -395,6 +400,87 @@ export default function DebitNoteForm({
       });
       alert(`Đã lưu "${data.companyName}" vào danh sách Khách hàng.`);
     }
+  };
+
+  const handleExportCSV = () => {
+    if (!data.companyName) {
+      alert("Vui lòng tối thiểu có Tên khách hàng để xuất dữ liệu.");
+      return;
+    }
+
+    const rows = [];
+    rows.push(["THÔNG TIN NỢ PHÍ / DEBIT NOTE CHI TIẾT"]);
+    rows.push(["Mã Debit Note", data.id || "Mới (Chưa lưu)"]);
+    rows.push(["Khách hàng (To)", data.companyName]);
+    rows.push(["Mã số thuế (MST)", data.taxId || ""]);
+    rows.push(["Địa chỉ (Address)", data.address || ""]);
+    rows.push(["Mã Job (Job No)", data.jobNo || ""]);
+    rows.push(["Hãng tàu/Đại lý (Carrier/Agent)", data.carrierAgent || ""]);
+    rows.push(["Ngày tàu chạy/về (ETD/ETA)", data.etdEta || ""]);
+    rows.push(["Số vận đơn (HBL/MBL)", data.hblMbl || ""]);
+    rows.push(["Cảng bốc hàng (POL)", data.pol || ""]);
+    rows.push(["Cảng dỡ hàng (POD)", data.pod || ""]);
+    rows.push(["Số lượng vỏ xe/Cont (Volume)", data.volume || ""]);
+    rows.push(["Tỷ giá quy đổi (ROE)", data.roe || ""]);
+    rows.push(["Ghi chú (Note)", data.note || ""]);
+    rows.push([]);
+
+    rows.push([
+      "STT",
+      "Nội dung khoản phí (Description)",
+      "Số lượng (Qty)",
+      "Đơn giá (Price)",
+      "Đơn vị (Currency)",
+      "VAT (%)",
+      "Thành tiền chưa VAT",
+      "Tiền thuế VAT",
+      "Thành tiền có VAT",
+      "Quy đổi VND",
+      "Hình thức"
+    ]);
+
+    let totalVnd = 0;
+    data.charges.forEach((charge, index) => {
+      const qty = Number(charge.qty) || 0;
+      const price = Number(charge.price) || 0;
+      const vatPct = Number(charge.vatPercent) || 0;
+      const subtotal = qty * price;
+      const vatVal = subtotal * (vatPct / 100);
+      const inclVat = subtotal + vatVal;
+
+      const rates = data.exchangeRates || (data.roe ? { "USD": data.roe } : {});
+      const rate = charge.currency === "VND" ? 1 : (rates[charge.currency || "USD"] || 25000);
+      const amountVnd = inclVat * rate;
+      totalVnd += amountVnd;
+
+      rows.push([
+        index + 1,
+        charge.description,
+        qty,
+        price,
+        charge.currency,
+        vatPct + "%",
+        subtotal,
+        vatVal,
+        inclVat,
+        Math.round(amountVnd),
+        charge.isPayOnBehalf ? "CHI HỘ" : "DỊCH VỤ"
+      ]);
+    });
+
+    rows.push([]);
+    rows.push(["TỔNG QUY ĐỒI TỔNG THÀNH THANH TOÁN (VND)", "", "", "", "", "", "", "", "", Math.round(totalVnd)]);
+
+    const csvContent = "\uFEFF" + rows.map(r => r.map(col => `"${String(col).replace(/"/g, '""')}"`).join(",")).join("\n");
+    const blob = new Blob([csvContent], { type: "text/csv;charset=utf-8;" });
+    const url = URL.createObjectURL(blob);
+    const link = document.createElement("a");
+    link.setAttribute("href", url);
+    const safeName = data.companyName.replace(/[^a-zA-Z0-9]/g, "_").substring(0, 30);
+    link.setAttribute("download", `DebitNote_${safeName || "Export"}.csv`);
+    document.body.appendChild(link);
+    link.click();
+    document.body.removeChild(link);
   };
 
   return (
@@ -456,10 +542,10 @@ export default function DebitNoteForm({
               />
               <button
                 type="button"
-                onClick={handleSearchTaxCode}
+                onClick={handleSearchCompanyDetails}
                 disabled={isSearchingTax}
                 className="bg-emerald-100 text-emerald-700 px-3 rounded-md text-xs font-bold flex items-center gap-1 hover:bg-emerald-200 disabled:opacity-50 transition cursor-pointer"
-                title="Google Search Tra cứu Tên & Địa chỉ tự động qua MST"
+                title="Google Search Tra cứu MST & Địa chỉ tự động qua Tên công ty"
               >
                 {isSearchingTax ? <RefreshCw size={12} className="animate-spin" /> : <Sparkles size={12} />}
                 Tra cứu
@@ -1295,8 +1381,18 @@ export default function DebitNoteForm({
         <div className="flex flex-col sm:flex-row items-stretch sm:items-center gap-2">
           <button
             type="button"
+            onClick={handleExportCSV}
+            className="flex items-center justify-center gap-2 rounded bg-amber-600 hover:bg-amber-700 text-white font-bold text-sm px-4 py-2 transition shadow-sm cursor-pointer"
+            title="Xuất bảng chi phí nợ phí chi tiết sang tệp CSV/Excel"
+          >
+            <Download size={16} />
+            Xuất Excel (CSV)
+          </button>
+
+          <button
+            type="button"
             onClick={onPreview}
-            className="flex items-center justify-center gap-2 rounded bg-[#0a4d92] hover:bg-[#073a6e] text-white font-bold text-sm px-5 py-2 transition shadow-sm cursor-pointer"
+            className="flex items-center justify-center gap-2 rounded bg-[#0a4d92] hover:bg-[#073a6e] text-white font-bold text-sm px-4 py-2 transition shadow-sm cursor-pointer"
           >
             <Eye size={16} />
             Xem trước & In (A4 PDF)
@@ -1306,7 +1402,7 @@ export default function DebitNoteForm({
             type="button"
             onClick={onSave}
             disabled={isSaving}
-            className="flex items-center justify-center gap-1 rounded bg-emerald-600 hover:bg-emerald-700 disabled:bg-emerald-400 text-white font-semibold text-sm px-5 py-2 transition shadow-sm cursor-pointer"
+            className="flex items-center justify-center gap-1 rounded bg-emerald-600 hover:bg-emerald-700 disabled:bg-emerald-400 text-white font-semibold text-sm px-4 py-2 transition shadow-sm cursor-pointer"
           >
             <Save size={16} />
             {isSaving ? "Đang xử lý..." : "Lưu vào Lịch sử"}
